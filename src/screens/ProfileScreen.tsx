@@ -1,33 +1,29 @@
 import React, { useState } from 'react';
 import { useOwnerApp } from '../context/OwnerAppContext';
 import { 
-  User, 
   Store, 
   SlidersHorizontal, 
   QrCode, 
   TrendingUp, 
   Bell, 
   LogOut, 
-  Volume2, 
   ChevronRight,
   ShieldCheck,
-  FileCode2
+  Phone
 } from 'lucide-react';
 
 interface ProfileScreenProps {
   onOpenSettings: () => void;
   onOpenNotifications: () => void;
   onOpenShopProfile: () => void;
-  onOpenCodeViewer: () => void;
 }
 
 export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   onOpenSettings,
   onOpenNotifications,
   onOpenShopProfile,
-  onOpenCodeViewer,
 }) => {
-  const { ownerProfile, shop, logout, setActiveScreen, isSoundEnabled, toggleSound } = useOwnerApp();
+  const { ownerProfile, shop, logout, setActiveScreen } = useOwnerApp();
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
   return (
@@ -44,7 +40,10 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             </h3>
             <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
           </div>
-          <p className="text-xs text-slate-400 truncate">{ownerProfile?.email}</p>
+          <div className="flex items-center gap-1.5 text-xs text-slate-400 truncate mt-0.5">
+            <Phone className="w-3 h-3 text-slate-500 shrink-0" />
+            <span>{ownerProfile?.phone || 'Registered Partner'}</span>
+          </div>
           <div className="mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-orange-500/15 border border-orange-500/30 text-[10px] font-bold text-orange-400">
             <Store className="w-3 h-3" />
             <span className="truncate">{shop?.name || 'Verified Partner'}</span>
@@ -133,22 +132,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           </div>
           <ChevronRight className="w-4 h-4 text-slate-500" />
         </button>
-
-        <button
-          onClick={onOpenCodeViewer}
-          className="w-full p-4 flex items-center justify-between hover:bg-slate-850 transition text-left"
-        >
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-cyan-500/15 text-cyan-400 flex items-center justify-center">
-              <FileCode2 className="w-4 h-4" />
-            </div>
-            <div>
-              <p className="text-xs font-bold text-white">Flutter Code Architecture</p>
-              <p className="text-[11px] text-slate-400">View clean Flutter files in lib/ folder</p>
-            </div>
-          </div>
-          <ChevronRight className="w-4 h-4 text-slate-500" />
-        </button>
       </div>
 
       {/* Logout */}
@@ -166,7 +149,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-sm w-full space-y-4 shadow-2xl">
             <h4 className="text-base font-bold text-white">Log Out?</h4>
             <p className="text-xs text-slate-400 leading-relaxed">
-              Are you sure you want to end this restaurant session? You will need to sign in again to access the owner dashboard.
+              Are you sure you want to end this restaurant session? You will need to sign in again with your phone number to access the owner dashboard.
             </p>
             <div className="flex gap-2 pt-2">
               <button

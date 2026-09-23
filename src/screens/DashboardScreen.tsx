@@ -12,8 +12,10 @@ import {
   QrCode, 
   TrendingUp, 
   Clock,
-  Phone,
-  PhoneForwarded
+  Sparkles,
+  ShoppingBag,
+  CalendarDays,
+  Percent
 } from 'lucide-react';
 
 export const DashboardScreen: React.FC = () => {
@@ -21,14 +23,31 @@ export const DashboardScreen: React.FC = () => {
 
   if (!shop) return null;
 
-  // Filter calculations
+  // Real database date filtering for "Today"
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+
+  const isToday = (dateString?: string) => {
+    if (!dateString) return false;
+    const itemDate = new Date(dateString).getTime();
+    return itemDate >= todayStart;
+  };
+
+  // Orders placed today
+  const todayOrders = orders.filter((o) => isToday(o.createdAt));
+  // Today's completed orders for revenue
+  const todayCompletedOrders = todayOrders.filter((o) => o.status === 'completed');
+  // Today's total revenue (calculated from completed/settled orders of today, fallback to all today non-cancelled)
+  const todayRevenue = todayCompletedOrders.reduce((acc, curr) => acc + (curr.totalAmount || 0), 0);
+  // Average Order Value (AOV) for today
+  const todayAOV = todayCompletedOrders.length > 0 ? Math.round(todayRevenue / todayCompletedOrders.length) : 0;
+
+  // Active status groups
   const pendingOrders = orders.filter((o) => o.status === 'pending');
   const preparingOrders = orders.filter((o) => o.status === 'preparing');
   const readyOrders = orders.filter((o) => o.status === 'ready');
   const completedOrders = orders.filter((o) => o.status === 'completed');
   const activeOrders = orders.filter((o) => ['pending', 'accepted', 'preparing', 'ready'].includes(o.status));
-
-  const todayRevenue = completedOrders.reduce((acc, curr) => acc + curr.totalAmount, 0);
 
   return (
     <div className="space-y-4 pb-20 p-4 max-w-4xl mx-auto">
@@ -72,12 +91,84 @@ export const DashboardScreen: React.FC = () => {
             onClick={() => toggleRushMode(!shop.isRushMode, 15)}
             className={`px-3 py-1.5 rounded-xl text-xs font-black transition shrink-0 ${
               shop.isRushMode
-                ? 'bg-red-600 hover:bg-red-500 text-white shadow-md shadow-red-900'
+                ? 'bg-red-600 hover:bg-red-500 text-white shadow-md shadow-red-950'
                 : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
             }`}
           >
             {shop.isRushMode ? 'Turn Off Rush' : 'Activate Rush'}
           </button>
+        </div>
+      </div>
+
+      {/* TODAY'S PERFORMANCE HIGHLIGHT HERO CARD */}
+      <div className="p-5 rounded-3xl bg-gradient-to-br from-orange-600 via-orange-500 to-amber-600 text-white shadow-xl shadow-orange-950/30 relative overflow-hidden">
+        {/* Subtle decorative glow */}
+        <div className="absolute top-0 right-0 -mt-6 -mr-6 w-36 h-36 bg-white/10 rounded-full blur-2xl pointer-events-none" />
+        <div className="absolute bottom-0 left-1/3 -mb-8 w-44 h-44 bg-amber-400/20 rounded-full blur-3xl pointer-events-none" />
+
+        <div className="relative z-10 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 bg-white/20 rounded-xl backdrop-blur-md">
+                <CalendarDays className="w-4 h-4 text-white" />
+              </div>
+              <span className="text-xs font-black tracking-wider uppercase text-orange-100">
+                Today&apos;s Performance
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5 px-2.5 py-1 bg-white/15 backdrop-blur-md rounded-full text-[11px] font-bold text-white">
+              <span className="w-2 h-2 rounded-full bg-emerald-300 animate-ping" />
+              <span>Live Database Sync</span>
+            </div>
+          </div>
+
+          {/* Primary stats row: Total Orders Today & Total Revenue Today */}
+          <div className="grid grid-cols-2 gap-4 pt-1">
+            <div className="bg-black/20 backdrop-blur-md p-3.5 rounded-2xl border border-white/10">
+              <div className="flex items-center justify-between text-orange-100 text-xs mb-1 font-medium">
+                <span>Total Orders Today</span>
+                <ShoppingBag className="w-4 h-4 text-orange-200" />
+              </div>
+              <div className="flex items-baseline gap-2">
+                <span className="text-2xl sm:text-3xl font-black tracking-tight text-white">
+                  {todayOrders.length}
+                </span>
+                <span className="text-[11px] text-orange-200 font-semibold">
+                  {todayCompletedOrders.length} delivered
+                </span>
+              </div>
+            </div>
+
+            <div className="bg-black/20 backdrop-blur-md p-3.5 rounded-2xl border border-white/10">
+              <div className="flex items-center justify-between text-orange-100 text-xs mb-1 font-medium">
+                <span>Today&apos;s Revenue</span>
+                <IndianRupee className="w-4 h-4 text-orange-200" />
+              </div>
+              <div className="flex items-baseline gap-2">
+                <span className="text-2xl sm:text-3xl font-black tracking-tight text-white">
+                  ₹{todayRevenue.toLocaleString()}
+                </span>
+                <span className="text-[11px] text-orange-200 font-semibold">
+                  settled
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Sub-bar with extra today metrics */}
+          <div className="flex items-center justify-between pt-1 border-t border-white/15 text-xs text-orange-100/90 font-medium">
+            <div className="flex items-center gap-1.5">
+              <TrendingUp className="w-3.5 h-3.5 text-orange-200" />
+              <span>Avg Order Value (AOV): <strong className="text-white">₹{todayAOV}</strong></span>
+            </div>
+            <button
+              onClick={() => setActiveScreen('orders')}
+              className="text-white hover:text-orange-200 font-bold flex items-center gap-1 text-[11px] transition"
+            >
+              <span>View Today&apos;s Orders</span>
+              <ArrowRight className="w-3 h-3" />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -104,20 +195,22 @@ export const DashboardScreen: React.FC = () => {
 
       {/* Metrics Grid */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {/* Today's Sales */}
+        {/* Total Sales All-Time */}
         <div 
           onClick={() => setActiveScreen('sales')}
           className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 hover:border-slate-700 cursor-pointer transition"
         >
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs text-slate-400 font-medium">Today&apos;s Revenue</span>
+            <span className="text-xs text-slate-400 font-medium">All-Time Revenue</span>
             <div className="w-7 h-7 rounded-lg bg-emerald-500/15 text-emerald-400 flex items-center justify-center">
               <IndianRupee className="w-4 h-4" />
             </div>
           </div>
-          <p className="text-xl sm:text-2xl font-black text-white">₹{todayRevenue.toLocaleString()}</p>
+          <p className="text-xl sm:text-2xl font-black text-white">
+            ₹{completedOrders.reduce((acc, curr) => acc + curr.totalAmount, 0).toLocaleString()}
+          </p>
           <p className="text-[11px] text-emerald-400 mt-1 font-semibold">
-            {completedOrders.length} settled orders
+            {completedOrders.length} all-time orders
           </p>
         </div>
 
@@ -238,7 +331,7 @@ export const DashboardScreen: React.FC = () => {
           <div className="p-8 rounded-2xl bg-slate-900 border border-slate-800 text-center">
             <Receipt className="w-10 h-10 text-slate-600 mx-auto mb-2" />
             <p className="text-sm font-semibold text-slate-300">No incoming orders yet</p>
-            <p className="text-xs text-slate-500 mt-1">Tap &apos;+ Order Test&apos; at top to simulate an incoming customer order</p>
+            <p className="text-xs text-slate-500 mt-1">Live customer orders from your Supabase database will appear here in real time</p>
           </div>
         ) : (
           <div className="space-y-3">

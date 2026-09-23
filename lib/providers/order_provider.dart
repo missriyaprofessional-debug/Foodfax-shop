@@ -34,6 +34,27 @@ class OrderProvider extends ChangeNotifier {
   int get completedCount => _orders.where((o) => o.status == 'completed').length;
   int get activeOrdersCount => _orders.where((o) => ['pending', 'accepted', 'preparing', 'ready'].contains(o.status)).length;
 
+  int get todayOrdersCount {
+    final now = DateTime.now();
+    return _orders
+        .where((o) =>
+            o.createdAt.year == now.year &&
+            o.createdAt.month == now.month &&
+            o.createdAt.day == now.day)
+        .length;
+  }
+
+  int get todayCompletedCount {
+    final now = DateTime.now();
+    return _orders
+        .where((o) =>
+            o.status == 'completed' &&
+            o.createdAt.year == now.year &&
+            o.createdAt.month == now.month &&
+            o.createdAt.day == now.day)
+        .length;
+  }
+
   double get todayRevenue {
     final now = DateTime.now();
     return _orders

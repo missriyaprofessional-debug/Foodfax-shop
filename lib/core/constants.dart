@@ -3,14 +3,14 @@ class AppConstants {
   static const String appTagline = 'Restaurant & Shop Partner App';
 
   // Supabase Configuration
-  // Configured via environment variables or default fallback
+  // Configured with owner project credentials
   static const String supabaseUrl = String.fromEnvironment(
     'SUPABASE_URL',
-    defaultValue: 'https://xyzcompany.supabase.co',
+    defaultValue: 'https://your-project.supabase.co',
   );
   static const String supabaseAnonKey = String.fromEnvironment(
     'SUPABASE_ANON_KEY',
-    defaultValue: 'public-anon-key-placeholder',
+    defaultValue: 'sb_publishable_O-f6YGUbj6hqHYBlwEhE5g_QVrnke9m',
   );
 
   // Storage Buckets

@@ -18,21 +18,23 @@ class OwnerRegisterScreen extends StatefulWidget {
 class _OwnerRegisterScreenState extends State<OwnerRegisterScreen> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
-  final _emailController = TextEditingController();
   final _phoneController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
+
+  String _countryCode = '+91';
   bool _obscurePassword = true;
 
   @override
   void dispose() {
     _nameController.dispose();
-    _emailController.dispose();
     _phoneController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
     super.dispose();
   }
+
+  String get _fullPhoneNumber => '$_countryCode${_phoneController.text.trim()}';
 
   Future<void> _handleRegister() async {
     if (!_formKey.currentState!.validate()) return;
@@ -40,11 +42,10 @@ class _OwnerRegisterScreenState extends State<OwnerRegisterScreen> {
     final auth = context.read<OwnerAuthProvider>();
     final shopProvider = context.read<ShopProvider>();
 
-    final success = await auth.register(
-      email: _emailController.text.trim(),
+    final success = await auth.registerWithPhone(
+      phone: _fullPhoneNumber,
       password: _passwordController.text,
       fullName: _nameController.text.trim(),
-      phone: _phoneController.text.trim(),
     );
 
     if (!mounted) return;
@@ -88,7 +89,7 @@ class _OwnerRegisterScreenState extends State<OwnerRegisterScreen> {
                 ),
                 const SizedBox(height: 6),
                 const Text(
-                  'Create an owner account to list your shop and start receiving live digital orders.',
+                  'Create an owner account using your mobile number to list your shop & receive live orders.',
                   style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
                 ),
                 const SizedBox(height: 28),
@@ -96,43 +97,85 @@ class _OwnerRegisterScreenState extends State<OwnerRegisterScreen> {
                 // Full Name
                 CustomTextField(
                   controller: _nameController,
-                  label: 'Full Name',
-                  hint: 'John Doe',
+                  label: 'Owner Full Name',
+                  hint: 'e.g. Vikram Malhotra',
                   prefixIcon: Icons.person_outline,
-                  validator: (v) => (v == null || v.isEmpty) ? 'Please enter your name' : null,
+                  validator: (v) => (v == null || v.trim().isEmpty) ? 'Please enter your full name' : null,
                 ),
                 const SizedBox(height: 18),
 
-                // Email
-                CustomTextField(
-                  controller: _emailController,
-                  label: 'Business / Owner Email',
-                  hint: 'owner@foodplace.com',
-                  prefixIcon: Icons.email_outlined,
-                  keyboardType: TextInputType.emailAddress,
-                  validator: (v) {
-                    if (v == null || v.isEmpty) return 'Please enter your email';
-                    if (!v.contains('@')) return 'Please enter a valid email';
-                    return null;
-                  },
+                // Phone with Country Code
+                const Text(
+                  'Mobile Phone Number',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.textSecondary),
                 ),
-                const SizedBox(height: 18),
-
-                // Phone
-                CustomTextField(
-                  controller: _phoneController,
-                  label: 'Phone Number',
-                  hint: '+91 98765 43210',
-                  prefixIcon: Icons.phone_outlined,
-                  keyboardType: TextInputType.phone,
-                  validator: (v) => (v == null || v.isEmpty) ? 'Please enter contact phone' : null,
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                      decoration: BoxDecoration(
+                        color: AppColors.surface,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: AppColors.border),
+                      ),
+                      child: Row(
+                        children: [
+                          const Text('🇮🇳', style: TextStyle(fontSize: 18)),
+                          const SizedBox(width: 6),
+                          Text(
+                            _countryCode,
+                            style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextFormField(
+                        controller: _phoneController,
+                        keyboardType: TextInputType.phone,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textPrimary,
+                          letterSpacing: 1.2,
+                        ),
+                        decoration: InputDecoration(
+                          hintText: '98450 12345',
+                          hintStyle: const TextStyle(color: AppColors.textMuted, letterSpacing: 1.0),
+                          prefixIcon: const Icon(Icons.phone_android_rounded, color: AppColors.textMuted, size: 20),
+                          filled: true,
+                          fillColor: AppColors.surface,
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: const BorderSide(color: AppColors.border),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: const BorderSide(color: AppColors.border),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: const BorderSide(color: AppColors.primary, width: 1.5),
+                          ),
+                        ),
+                        validator: (v) {
+                          if (v == null || v.trim().isEmpty) return 'Please enter mobile number';
+                          if (v.trim().length < 10) return 'Enter a valid 10-digit mobile number';
+                          return null;
+                        },
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 18),
 
                 // Password
                 CustomTextField(
                   controller: _passwordController,
-                  label: 'Password',
+                  label: 'Security Password / PIN',
                   hint: 'Min. 6 characters',
                   prefixIcon: Icons.lock_outline,
                   obscureText: _obscurePassword,
@@ -151,7 +194,7 @@ class _OwnerRegisterScreenState extends State<OwnerRegisterScreen> {
                 // Confirm Password
                 CustomTextField(
                   controller: _confirmPasswordController,
-                  label: 'Confirm Password',
+                  label: 'Confirm Password / PIN',
                   hint: 'Re-enter password',
                   prefixIcon: Icons.lock_outline,
                   obscureText: _obscurePassword,

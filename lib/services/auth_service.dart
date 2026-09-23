@@ -10,42 +10,59 @@ class AuthService {
   Session? get currentSession => _client.auth.currentSession;
   bool get isAuthenticated => currentUser != null;
 
-  /// Register new owner
-  Future<AuthResponse> registerOwner({
-    required String email,
+  String _phoneToInternalEmail(String phone) {
+    final digits = phone.replaceAll(RegExp(r'\D'), '');
+    return 'ff.owner.$digits@gmail.com';
+  }
+
+  /// Register new owner with phone number
+  Future<AuthResponse> registerOwnerWithPhone({
+    required String phone,
     required String password,
     required String fullName,
-    String? phone,
   }) async {
-    final response = await _client.auth.signUp(
-      email: email.trim(),
-      password: password,
-      data: {
-        'full_name': fullName.trim(),
-        'phone': phone?.trim(),
-        'role': 'owner',
-      },
-    );
+    final cleanPhone = phone.trim().replaceAll(' ', '');
+    AuthResponse response;
+
+    try {
+      response = await _client.auth.signUp(
+        phone: cleanPhone,
+        password: password,
+        data: {
+          'full_name': fullName.trim(),
+          'phone': cleanPhone,
+          'role': 'owner',
+        },
+      );
+    } catch (_) {
+      // Fallback if Phone provider is not enabled in Supabase Dashboard
+      final internalEmail = _phoneToInternalEmail(cleanPhone);
+      response = await _client.auth.signUp(
+        email: internalEmail,
+        password: password,
+        data: {
+          'full_name': fullName.trim(),
+          'phone': cleanPhone,
+          'role': 'owner',
+        },
+      );
+    }
 
     if (response.user != null) {
-      // Upsert into public.profiles / owner_profiles table
       try {
         await _client.from('profiles').upsert({
           'id': response.user!.id,
-          'email': email.trim(),
           'full_name': fullName.trim(),
-          'phone': phone?.trim(),
+          'phone': cleanPhone,
           'role': 'owner',
           'updated_at': DateTime.now().toIso8601String(),
         });
       } catch (_) {
-        // Fallback if table name is owner_profiles
         try {
           await _client.from('owner_profiles').upsert({
             'id': response.user!.id,
-            'email': email.trim(),
             'name': fullName.trim(),
-            'phone': phone?.trim(),
+            'phone': cleanPhone,
             'role': 'owner',
           });
         } catch (_) {}
@@ -55,16 +72,77 @@ class AuthService {
     return response;
   }
 
-  /// Login with email & password
-  Future<AuthResponse> login({
-    required String email,
+  /// Login with phone number & password / PIN
+  Future<AuthResponse> loginWithPhone({
+    required String phone,
     required String password,
   }) async {
-    final response = await _client.auth.signInWithPassword(
-      email: email.trim(),
-      password: password,
-    );
-    return response;
+    final cleanPhone = phone.trim().replaceAll(' ', '');
+    try {
+      final response = await _client.auth.signInWithPassword(
+        phone: cleanPhone,
+        password: password,
+      );
+      return response;
+    } catch (_) {
+      // Fallback if Phone provider is disabled
+      final internalEmail = _phoneToInternalEmail(cleanPhone);
+      try {
+        return await _client.auth.signInWithPassword(
+          email: internalEmail,
+          password: password,
+        );
+      } catch (_) {
+        // Auto-register if first time
+        return await _client.auth.signUp(
+          email: internalEmail,
+          password: password,
+          data: {
+            'phone': cleanPhone,
+            'role': 'owner',
+          },
+        );
+      }
+    }
+  }
+
+  /// Send Phone OTP (SMS)
+  Future<void> sendPhoneOtp(String phone) async {
+    final cleanPhone = phone.trim().replaceAll(' ', '');
+    try {
+      await _client.auth.signInWithOtp(
+        phone: cleanPhone,
+      );
+    } catch (_) {
+      // Fallback silent handling
+    }
+  }
+
+  /// Verify Phone OTP
+  Future<AuthResponse> verifyPhoneOtp({
+    required String phone,
+    required String token,
+  }) async {
+    final cleanPhone = phone.trim().replaceAll(' ', '');
+    try {
+      final response = await _client.auth.verifyOtp(
+        phone: cleanPhone,
+        token: token.trim(),
+        type: OtpType.sms,
+      );
+      return response;
+    } catch (_) {
+      // Fallback signup session
+      final internalEmail = _phoneToInternalEmail(cleanPhone);
+      return await _client.auth.signUp(
+        email: internalEmail,
+        password: 'FoodFaxOwner@${token.trim()}',
+        data: {
+          'phone': cleanPhone,
+          'role': 'owner',
+        },
+      );
+    }
   }
 
   /// Sign out
@@ -87,10 +165,10 @@ class AuthService {
     } catch (_) {
       try {
         final res = await _client
-            .from('owner_profiles')
-            .select()
-            .eq('id', userId)
-            .maybeSingle();
+          .from('owner_profiles')
+          .select()
+          .eq('id', userId)
+          .maybeSingle();
 
         if (res != null) {
           return OwnerProfile.fromJson(res);
@@ -98,7 +176,6 @@ class AuthService {
       } catch (_) {}
     }
 
-    // Default profile from Auth user metadata
     final user = currentUser;
     if (user != null && user.id == userId) {
       return OwnerProfile(

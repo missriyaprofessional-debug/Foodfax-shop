@@ -94,9 +94,9 @@ export interface Shop {
 
 export interface OwnerProfile {
   id: string;
-  email: string;
+  email?: string;
   fullName: string;
-  phone?: string;
+  phone: string;
   avatarUrl?: string;
   role: 'owner';
   createdAt?: string;

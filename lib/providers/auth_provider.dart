@@ -57,20 +57,20 @@ class OwnerAuthProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<bool> login(String email, String password) async {
+  Future<bool> loginWithPhone(String phone, String password) async {
     _isLoading = true;
     _errorMessage = null;
     notifyListeners();
 
     try {
-      final res = await _repository.login(email: email, password: password);
+      final res = await _repository.loginWithPhone(phone: phone, password: password);
       if (res.user != null) {
         await _loadProfile(res.user!.id);
         _isLoading = false;
         notifyListeners();
         return true;
       }
-      _errorMessage = 'Invalid credentials';
+      _errorMessage = 'Invalid phone number or password';
       _isLoading = false;
       notifyListeners();
       return false;
@@ -82,22 +82,63 @@ class OwnerAuthProvider extends ChangeNotifier {
     }
   }
 
-  Future<bool> register({
-    required String email,
+  Future<bool> sendPhoneOtp(String phone) async {
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      await _repository.sendPhoneOtp(phone);
+      _isLoading = false;
+      notifyListeners();
+      return true;
+    } catch (e) {
+      _errorMessage = e.toString().replaceAll('Exception:', '').trim();
+      _isLoading = false;
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<bool> verifyPhoneOtp(String phone, String otp) async {
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      final res = await _repository.verifyPhoneOtp(phone: phone, token: otp);
+      if (res.user != null) {
+        await _loadProfile(res.user!.id);
+        _isLoading = false;
+        notifyListeners();
+        return true;
+      }
+      _errorMessage = 'Invalid or expired OTP';
+      _isLoading = false;
+      notifyListeners();
+      return false;
+    } catch (e) {
+      _errorMessage = e.toString().replaceAll('Exception:', '').trim();
+      _isLoading = false;
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<bool> registerWithPhone({
+    required String phone,
     required String password,
     required String fullName,
-    String? phone,
   }) async {
     _isLoading = true;
     _errorMessage = null;
     notifyListeners();
 
     try {
-      final res = await _repository.registerOwner(
-        email: email,
+      final res = await _repository.registerOwnerWithPhone(
+        phone: phone,
         password: password,
         fullName: fullName,
-        phone: phone,
       );
       if (res.user != null) {
         await _loadProfile(res.user!.id);

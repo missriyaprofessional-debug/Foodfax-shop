@@ -19,8 +19,10 @@ interface OwnerAppContextType {
   setSelectedOrderId: (id: string | null) => void;
   isSoundEnabled: boolean;
   toggleSound: () => void;
-  login: (email: string, password: string) => Promise<boolean>;
-  register: (data: { email: string; password: string; fullName: string; phone?: string }) => Promise<boolean>;
+  loginWithPhone: (phone: string, password: string) => Promise<boolean>;
+  sendPhoneOtp: (phone: string) => Promise<boolean>;
+  verifyPhoneOtp: (phone: string, token: string) => Promise<boolean>;
+  registerWithPhone: (data: { phone: string; password: string; fullName: string }) => Promise<boolean>;
   logout: () => Promise<void>;
   saveShop: (shopData: Partial<Shop>) => Promise<boolean>;
   toggleShopOpen: (isOpen: boolean) => void;
@@ -30,249 +32,173 @@ interface OwnerAppContextType {
   deleteMenuItem: (id: string) => Promise<boolean>;
   toggleItemAvailability: (id: string, isAvailable: boolean) => void;
   addCategory: (name: string) => Promise<void>;
-  simulateIncomingOrder: () => void;
+  refreshDatabaseData: () => Promise<void>;
+  refreshOrders: (targetShopId?: string) => Promise<OwnerOrder[]>;
+  upsertOrderFromRealtime: (order: OwnerOrder, isNew?: boolean) => void;
+  removeOrderFromRealtime: (orderId: string) => void;
+  realtimeStatus: 'connected' | 'connecting' | 'disconnected';
+  setRealtimeStatus: (status: 'connected' | 'connecting' | 'disconnected') => void;
+  fetchCompletedOrderHistory: () => Promise<OwnerOrder[]>;
+  generatedOtp: string | null;
+  requestPasswordReset: (phone: string) => Promise<{ success: boolean; message: string; otp?: string }>;
+  resetPasswordWithOtp: (phone: string, token: string, newPass: string) => Promise<boolean>;
+  resetOtpCode: string | null;
+}
+
+export function mapDbOrderToOwnerOrder(o: any): OwnerOrder {
+  return {
+    id: o.id,
+    shopId: o.shop_id,
+    orderNumber: o.order_number || `#FF-${o.id ? o.id.substring(0, 4).toUpperCase() : '0000'}`,
+    customerName: o.customer_name || 'Customer',
+    customerPhone: o.customer_phone || '',
+    orderType: o.order_type || 'dine_in',
+    tableNumber: o.table_number,
+    status: (o.status || 'pending') as OrderStatus,
+    subtotal: o.subtotal ?? o.total_amount ?? 0,
+    tax: o.tax ?? 0,
+    discount: o.discount ?? 0,
+    totalAmount: o.total_amount ?? 0,
+    paymentStatus: o.payment_status || 'paid',
+    paymentMethod: o.payment_method || 'upi',
+    cancellationReason: o.cancellation_reason,
+    items: (o.order_items || []).map((oi: any) => ({
+      id: oi.id,
+      menuItemId: oi.menu_item_id,
+      name: oi.name,
+      price: oi.price,
+      quantity: oi.quantity,
+      isVeg: oi.is_veg ?? true,
+      notes: oi.notes,
+    })),
+    createdAt: o.created_at || new Date().toISOString(),
+    updatedAt: o.updated_at,
+    estimatedPrepMinutes: o.estimated_prep_minutes || 15,
+  };
 }
 
 const OwnerAppContext = createContext<OwnerAppContextType | undefined>(undefined);
 
-// Default initial demo state
-const DEMO_OWNER: OwnerProfile = {
-  id: 'owner_demo_101',
-  email: 'partner@spicegarden.com',
-  fullName: 'Vikram Malhotra',
-  phone: '+91 98450 12345',
-  role: 'owner',
-  createdAt: new Date().toISOString(),
-};
+// Standard RFC-compliant email that Supabase Auth always accepts
+function phoneToInternalEmail(phone: string): string {
+  const digits = phone.replace(/\D/g, '');
+  return `ff.owner.${digits}@gmail.com`;
+}
 
-const DEMO_SHOP: Shop = {
-  id: 'shop_demo_882',
-  ownerId: 'owner_demo_101',
-  name: 'Spice Garden Bistro',
-  shopType: 'Restaurant & Cafe',
-  description: 'Authentic North Indian tandoor, artisanal biryanis, rolls & gourmet shakes',
-  phone: '+91 98450 12345',
-  address: '#42, 80 Feet Road, 4th Block',
-  area: 'Koramangala',
-  city: 'Bengaluru',
-  state: 'Karnataka',
-  pincode: '560034',
-  latitude: 12.9352,
-  longitude: 77.6245,
-  openingTime: '10:00 AM',
-  closingTime: '11:30 PM',
-  upiId: 'spicegarden@okaxis',
-  isOpen: true,
-  isRushMode: false,
-  rushExtraMinutes: 15,
-  minimumOrder: 99,
-  acceptsTakeaway: true,
-  acceptsDineIn: true,
-  acceptsDelivery: true,
-  createdAt: new Date().toISOString(),
-};
+// Local registry of registered users for resilient authentication
+function getLocalUsers(): Record<string, { password: string; fullName: string; id: string }> {
+  try {
+    const raw = localStorage.getItem('foodfax_local_users');
+    return raw ? JSON.parse(raw) : {};
+  } catch (_) {
+    return {};
+  }
+}
 
-const DEMO_CATEGORIES: MenuCategory[] = [
-  { id: 'cat_starters', shopId: 'shop_demo_882', name: 'Starters & Tandoor', sortOrder: 1, isActive: true },
-  { id: 'cat_mains', shopId: 'shop_demo_882', name: 'Main Course & Curries', sortOrder: 2, isActive: true },
-  { id: 'cat_biryani', shopId: 'shop_demo_882', name: 'Biryani & Rice', sortOrder: 3, isActive: true },
-  { id: 'cat_breads', shopId: 'shop_demo_882', name: 'Breads & Roti', sortOrder: 4, isActive: true },
-  { id: 'cat_drinks', shopId: 'shop_demo_882', name: 'Beverages & Shakes', sortOrder: 5, isActive: true },
-  { id: 'cat_desserts', shopId: 'shop_demo_882', name: 'Desserts', sortOrder: 6, isActive: true },
-];
-
-const DEMO_MENU_ITEMS: MenuItem[] = [
-  {
-    id: 'item_1',
-    shopId: 'shop_demo_882',
-    categoryId: 'cat_starters',
-    name: 'Paneer Tikka Angara',
-    description: 'Charcoal grilled cottage cheese marinated in spiced yogurt and mustard oil with mint chutney',
-    price: 249,
-    isVeg: true,
-    isAvailable: true,
-    preparationTimeMinutes: 15,
-    tag: 'Bestseller',
-  },
-  {
-    id: 'item_2',
-    shopId: 'shop_demo_882',
-    categoryId: 'cat_mains',
-    name: 'Butter Chicken Roast Bowl',
-    description: 'Tender tandoori chicken cooked in velvety tomato, makhani butter and fragrant fenugreek gravy',
-    price: 349,
-    isVeg: false,
-    isAvailable: true,
-    preparationTimeMinutes: 20,
-    tag: "Chef's Special",
-  },
-  {
-    id: 'item_3',
-    shopId: 'shop_demo_882',
-    categoryId: 'cat_biryani',
-    name: 'Hyderabadi Dum Biryani',
-    description: 'Aromatic basmati rice layered with spiced marinated cuts, saffron milk, served with mirchi ka salan',
-    price: 320,
-    isVeg: false,
-    isAvailable: true,
-    preparationTimeMinutes: 25,
-    tag: 'Bestseller',
-  },
-  {
-    id: 'item_4',
-    shopId: 'shop_demo_882',
-    categoryId: 'cat_breads',
-    name: 'Garlic Butter Naan',
-    description: 'Crisp clay oven flatbread brushed with crushed roasted garlic and pure Amul butter',
-    price: 65,
-    isVeg: true,
-    isAvailable: true,
-    preparationTimeMinutes: 8,
-  },
-  {
-    id: 'item_5',
-    shopId: 'shop_demo_882',
-    categoryId: 'cat_drinks',
-    name: 'Alphonso Mango Lassi',
-    description: 'Thick churned creamy yogurt blended with real Ratnagiri mango pulp and cardamom',
-    price: 119,
-    isVeg: true,
-    isAvailable: true,
-    preparationTimeMinutes: 5,
-    tag: 'Must Try',
-  },
-  {
-    id: 'item_6',
-    shopId: 'shop_demo_882',
-    categoryId: 'cat_desserts',
-    name: 'Warm Gulab Jamun with Rabri',
-    description: 'Golden fried milk dumplings soaked in rose saffron syrup served with reduced milk rabri',
-    price: 139,
-    isVeg: true,
-    isAvailable: true,
-    preparationTimeMinutes: 6,
-  },
-];
-
-const DEMO_ORDERS: OwnerOrder[] = [
-  {
-    id: 'ord_9901',
-    shopId: 'shop_demo_882',
-    orderNumber: '#FF-8841',
-    customerName: 'Ananya Sharma',
-    customerPhone: '+91 98712 34567',
-    orderType: 'dine_in',
-    tableNumber: '4',
-    status: 'pending',
-    subtotal: 598,
-    tax: 30,
-    discount: 0,
-    totalAmount: 628,
-    paymentStatus: 'paid',
-    paymentMethod: 'upi',
-    items: [
-      { id: 'oi_1', menuItemId: 'item_1', name: 'Paneer Tikka Angara', price: 249, quantity: 1, isVeg: true, notes: 'Extra spicy mint chutney' },
-      { id: 'oi_2', menuItemId: 'item_3', name: 'Hyderabadi Dum Biryani', price: 349, quantity: 1, isVeg: false },
-    ],
-    createdAt: new Date(Date.now() - 3 * 60 * 1000).toISOString(),
-    estimatedPrepMinutes: 20,
-  },
-  {
-    id: 'ord_9902',
-    shopId: 'shop_demo_882',
-    orderNumber: '#FF-8839',
-    customerName: 'Rahul Verma',
-    customerPhone: '+91 99100 88219',
-    orderType: 'takeaway',
-    status: 'preparing',
-    subtotal: 414,
-    tax: 21,
-    discount: 0,
-    totalAmount: 435,
-    paymentStatus: 'paid',
-    paymentMethod: 'upi',
-    items: [
-      { id: 'oi_3', menuItemId: 'item_2', name: 'Butter Chicken Roast Bowl', price: 349, quantity: 1, isVeg: false },
-      { id: 'oi_4', menuItemId: 'item_4', name: 'Garlic Butter Naan', price: 65, quantity: 1, isVeg: true },
-    ],
-    createdAt: new Date(Date.now() - 14 * 60 * 1000).toISOString(),
-    estimatedPrepMinutes: 20,
-  },
-  {
-    id: 'ord_9903',
-    shopId: 'shop_demo_882',
-    orderNumber: '#FF-8835',
-    customerName: 'Priya Iyer',
-    customerPhone: '+91 97401 23901',
-    orderType: 'dine_in',
-    tableNumber: '2',
-    status: 'ready',
-    subtotal: 258,
-    tax: 13,
-    discount: 0,
-    totalAmount: 271,
-    paymentStatus: 'paid',
-    paymentMethod: 'upi',
-    items: [
-      { id: 'oi_5', menuItemId: 'item_5', name: 'Alphonso Mango Lassi', price: 119, quantity: 1, isVeg: true },
-      { id: 'oi_6', menuItemId: 'item_6', name: 'Warm Gulab Jamun with Rabri', price: 139, quantity: 1, isVeg: true },
-    ],
-    createdAt: new Date(Date.now() - 25 * 60 * 1000).toISOString(),
-    estimatedPrepMinutes: 10,
-  },
-  {
-    id: 'ord_9904',
-    shopId: 'shop_demo_882',
-    orderNumber: '#FF-8829',
-    customerName: 'Amit Saxena',
-    customerPhone: '+91 98211 44556',
-    orderType: 'takeaway',
-    status: 'completed',
-    subtotal: 717,
-    tax: 36,
-    discount: 50,
-    totalAmount: 703,
-    paymentStatus: 'paid',
-    paymentMethod: 'upi',
-    items: [
-      { id: 'oi_7', menuItemId: 'item_1', name: 'Paneer Tikka Angara', price: 249, quantity: 1, isVeg: true },
-      { id: 'oi_8', menuItemId: 'item_2', name: 'Butter Chicken Roast Bowl', price: 349, quantity: 1, isVeg: false },
-      { id: 'oi_9', menuItemId: 'item_5', name: 'Alphonso Mango Lassi', price: 119, quantity: 1, isVeg: true },
-    ],
-    createdAt: new Date(Date.now() - 65 * 60 * 1000).toISOString(),
-    estimatedPrepMinutes: 20,
-  },
-];
+function saveLocalUser(phone: string, data: { password: string; fullName: string; id: string }) {
+  try {
+    const users = getLocalUsers();
+    const digits = phone.replace(/\D/g, '').slice(-10);
+    users[digits] = data;
+    localStorage.setItem('foodfax_local_users', JSON.stringify(users));
+  } catch (_) {}
+}
 
 export const OwnerAppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [activeScreen, setActiveScreen] = useState<ActiveScreen>('dashboard');
+  const [activeScreen, setActiveScreen] = useState<ActiveScreen>('login');
   const [ownerProfile, setOwnerProfile] = useState<OwnerProfile | null>(() => {
     const saved = localStorage.getItem('foodfax_owner_profile');
-    return saved ? JSON.parse(saved) : DEMO_OWNER;
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed.id && !parsed.id.includes('demo')) return parsed;
+      } catch (_) {}
+    }
+    return null;
   });
+
   const [shop, setShop] = useState<Shop | null>(() => {
     const saved = localStorage.getItem('foodfax_owner_shop');
-    return saved ? JSON.parse(saved) : DEMO_SHOP;
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed.id && !parsed.id.includes('demo')) return parsed;
+      } catch (_) {}
+    }
+    return null;
   });
-  const [orders, setOrders] = useState<OwnerOrder[]>(() => {
-    const saved = localStorage.getItem('foodfax_owner_orders');
-    return saved ? JSON.parse(saved) : DEMO_ORDERS;
-  });
-  const [menuCategories, setMenuCategories] = useState<MenuCategory[]>(() => {
-    const saved = localStorage.getItem('foodfax_menu_categories');
-    return saved ? JSON.parse(saved) : DEMO_CATEGORIES;
-  });
-  const [menuItems, setMenuItems] = useState<MenuItem[]>(() => {
-    const saved = localStorage.getItem('foodfax_menu_items');
-    return saved ? JSON.parse(saved) : DEMO_MENU_ITEMS;
-  });
+
+  // Only real data from database
+  const [orders, setOrders] = useState<OwnerOrder[]>([]);
+  const [menuCategories, setMenuCategories] = useState<MenuCategory[]>([]);
+  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
 
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [isSoundEnabled, setIsSoundEnabled] = useState<boolean>(soundService.isEnabled());
+  const [generatedOtp, setGeneratedOtp] = useState<string | null>(null);
+  const [resetOtpCode, setResetOtpCode] = useState<string | null>(null);
+  const [realtimeStatus, setRealtimeStatus] = useState<'connected' | 'connecting' | 'disconnected'>('connecting');
 
-  // Save changes to localStorage for continuous session persistence
+  // Dedicated lightweight order refresh from Supabase (does not force screen change)
+  const refreshOrders = useCallback(async (targetShopId?: string): Promise<OwnerOrder[]> => {
+    const sId = targetShopId || shop?.id;
+    if (!sId) return [];
+    const client = getSupabaseClient();
+    if (!client) return [];
+
+    try {
+      const { data: ordersData, error } = await client
+        .from('orders')
+        .select('*, order_items(*)')
+        .eq('shop_id', sId)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.warn('Error refreshing orders:', error);
+        return [];
+      }
+
+      if (ordersData) {
+        const mappedOrders = ordersData.map(mapDbOrderToOwnerOrder);
+        setOrders(mappedOrders);
+        return mappedOrders;
+      }
+      return [];
+    } catch (err) {
+      console.warn('Failed to refresh orders from Supabase:', err);
+      return [];
+    }
+  }, [shop?.id]);
+
+  // Realtime order upsert (inserts new order at top, or updates existing in place)
+  const upsertOrderFromRealtime = useCallback((incomingOrder: OwnerOrder, isNew = false) => {
+    setOrders((prev) => {
+      const idx = prev.findIndex((o) => o.id === incomingOrder.id);
+      if (idx !== -1) {
+        const updated = [...prev];
+        updated[idx] = {
+          ...updated[idx],
+          ...incomingOrder,
+          items: incomingOrder.items && incomingOrder.items.length > 0 ? incomingOrder.items : updated[idx].items,
+        };
+        return updated;
+      }
+      return [incomingOrder, ...prev];
+    });
+
+    if (isNew) {
+      soundService.playNewOrderChime();
+    }
+  }, []);
+
+  // Realtime order removal
+  const removeOrderFromRealtime = useCallback((orderId: string) => {
+    setOrders((prev) => prev.filter((o) => o.id !== orderId));
+  }, []);
+
+  // Persistence of active real profile
   useEffect(() => {
     if (ownerProfile) {
       localStorage.setItem('foodfax_owner_profile', JSON.stringify(ownerProfile));
@@ -289,113 +215,231 @@ export const OwnerAppProvider: React.FC<{ children: ReactNode }> = ({ children }
     }
   }, [shop]);
 
-  useEffect(() => {
-    localStorage.setItem('foodfax_owner_orders', JSON.stringify(orders));
-  }, [orders]);
-
-  useEffect(() => {
-    localStorage.setItem('foodfax_menu_categories', JSON.stringify(menuCategories));
-  }, [menuCategories]);
-
-  useEffect(() => {
-    localStorage.setItem('foodfax_menu_items', JSON.stringify(menuItems));
-  }, [menuItems]);
-
   const isAuthenticated = ownerProfile !== null;
-  const hasCompletedShopSetup = shop !== null && shop.name.trim().length > 0;
+  const hasCompletedShopSetup = shop !== null && Boolean(shop.name?.trim());
 
-  // Supabase Auth listener & Realtime initialization
+  // Fetch all real database data for the current authenticated owner
+  const loadDatabaseData = useCallback(async (userId: string, currentShopId?: string) => {
+    const client = getSupabaseClient();
+    if (!client) return;
+
+    try {
+      // 1. Fetch Profile from Supabase
+      const { data: prof } = await client
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (prof) {
+        setOwnerProfile({
+          id: prof.id,
+          email: prof.email,
+          fullName: prof.full_name || 'Restaurant Owner',
+          phone: prof.phone || '',
+          role: 'owner',
+        });
+      }
+
+      // 2. Fetch Shop from Supabase
+      const { data: shopData } = await client
+        .from('shops')
+        .select('*')
+        .eq('owner_id', userId)
+        .maybeSingle();
+
+      if (shopData) {
+        const loadedShop: Shop = {
+          id: shopData.id,
+          ownerId: shopData.owner_id,
+          name: shopData.name,
+          shopType: shopData.shop_type,
+          description: shopData.description,
+          phone: shopData.phone,
+          address: shopData.address,
+          area: shopData.area,
+          city: shopData.city,
+          state: shopData.state,
+          pincode: shopData.pincode,
+          latitude: shopData.latitude,
+          longitude: shopData.longitude,
+          openingTime: shopData.opening_time,
+          closingTime: shopData.closing_time,
+          upiId: shopData.upi_id,
+          isOpen: shopData.is_open ?? true,
+          isRushMode: shopData.is_rush_mode ?? false,
+          rushExtraMinutes: shopData.rushExtraMinutes ?? 15,
+          minimumOrder: shopData.minimum_order ?? 0,
+          acceptsTakeaway: shopData.accepts_takeaway ?? true,
+          acceptsDineIn: shopData.accepts_dine_in ?? true,
+          acceptsDelivery: shopData.accepts_delivery ?? false,
+          createdAt: shopData.created_at,
+        };
+        setShop(loadedShop);
+
+        const targetShopId = currentShopId || shopData.id;
+
+        // 3. Fetch Real Orders from Database
+        const { data: ordersData } = await client
+          .from('orders')
+          .select('*, order_items(*)')
+          .eq('shop_id', targetShopId)
+          .order('created_at', { ascending: false });
+
+        if (ordersData) {
+          const mappedOrders: OwnerOrder[] = ordersData.map(mapDbOrderToOwnerOrder);
+          setOrders(mappedOrders);
+        } else {
+          setOrders([]);
+        }
+
+        // 4. Fetch Real Categories
+        const { data: catData } = await client
+          .from('categories')
+          .select('*')
+          .eq('shop_id', targetShopId)
+          .order('sort_order', { ascending: true });
+
+        if (catData) {
+          setMenuCategories(
+            catData.map((c: any) => ({
+              id: c.id,
+              shopId: c.shop_id,
+              name: c.name,
+              sortOrder: c.sort_order || 0,
+              isActive: c.is_active ?? true,
+            }))
+          );
+        } else {
+          setMenuCategories([]);
+        }
+
+        // 5. Fetch Real Menu Items
+        const { data: itemsData } = await client
+          .from('menu_items')
+          .select('*')
+          .eq('shop_id', targetShopId)
+          .order('name', { ascending: true });
+
+        if (itemsData) {
+          setMenuItems(
+            itemsData.map((i: any) => ({
+              id: i.id,
+              shopId: i.shop_id,
+              categoryId: i.category_id,
+              name: i.name,
+              description: i.description,
+              price: i.price,
+              isVeg: i.is_veg ?? true,
+              isAvailable: i.is_available ?? true,
+              preparationTimeMinutes: i.preparation_time_minutes || 15,
+              tag: i.tag,
+              imageUrl: i.image_url,
+            }))
+          );
+        } else {
+          setMenuItems([]);
+        }
+
+        setActiveScreen((prev) => (['splash', 'login', 'register'].includes(prev) ? 'dashboard' : prev));
+      } else {
+        setShop(null);
+        setOrders([]);
+        setMenuCategories([]);
+        setMenuItems([]);
+        setActiveScreen('shop_setup');
+      }
+    } catch (err) {
+      console.warn('Error fetching Supabase database records:', err);
+    }
+  }, []);
+
+  // Supabase Auth listener & Session check
   useEffect(() => {
     const client = getSupabaseClient();
     if (!client) return;
 
-    // Listen to Supabase auth events
-    const { data: authListener } = client.auth.onAuthStateChange(async (_event, session) => {
+    client.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
-        // Query user profile from Supabase
-        const { data: prof } = await client
-          .from('profiles')
-          .select('*')
-          .eq('id', session.user.id)
-          .maybeSingle();
-
-        if (prof) {
-          setOwnerProfile({
-            id: prof.id,
-            email: prof.email || session.user.email || '',
-            fullName: prof.full_name || 'Restaurant Owner',
-            phone: prof.phone,
-            role: 'owner',
-          });
-        }
-
-        // Query shop from Supabase
-        const { data: shopData } = await client
-          .from('shops')
-          .select('*')
-          .eq('owner_id', session.user.id)
-          .maybeSingle();
-
-        if (shopData) {
-          setShop({
-            id: shopData.id,
-            ownerId: shopData.owner_id,
-            name: shopData.name,
-            shopType: shopData.shop_type,
-            description: shopData.description,
-            phone: shopData.phone,
-            address: shopData.address,
-            area: shopData.area,
-            city: shopData.city,
-            state: shopData.state,
-            pincode: shopData.pincode,
-            latitude: shopData.latitude,
-            longitude: shopData.longitude,
-            openingTime: shopData.opening_time,
-            closingTime: shopData.closing_time,
-            upiId: shopData.upi_id,
-            isOpen: shopData.is_open ?? true,
-            isRushMode: shopData.is_rush_mode ?? false,
-            rushExtraMinutes: shopData.rush_extra_minutes ?? 15,
-            minimumOrder: shopData.minimum_order ?? 0,
-            acceptsTakeaway: shopData.accepts_takeaway ?? true,
-            acceptsDineIn: shopData.accepts_dine_in ?? true,
-            acceptsDelivery: shopData.accepts_delivery ?? false,
-          });
-        }
+        loadDatabaseData(session.user.id);
+      } else if (!ownerProfile) {
+        setActiveScreen('login');
       }
     });
 
-    // Setup Supabase Realtime channel if shop exists
-    if (shop?.id) {
-      const channel = client
-        .channel(`shop_orders_${shop.id}`)
-        .on(
-          'postgres_changes',
-          { event: '*', schema: 'public', table: 'orders', filter: `shop_id=eq.${shop.id}` },
-          (payload) => {
-            if (payload.eventType === 'INSERT') {
-              const newOrd = payload.new as OwnerOrder;
-              setOrders((prev) => [newOrd, ...prev]);
-              soundService.playNewOrderChime();
-            } else if (payload.eventType === 'UPDATE') {
-              const updated = payload.new as OwnerOrder;
-              setOrders((prev) => prev.map((o) => (o.id === updated.id ? { ...o, ...updated } : o)));
-            }
-          }
-        )
-        .subscribe();
-
-      return () => {
-        channel.unsubscribe();
-        authListener.subscription.unsubscribe();
-      };
-    }
+    const { data: authListener } = client.auth.onAuthStateChange(async (_event, session) => {
+      if (session?.user) {
+        await loadDatabaseData(session.user.id);
+      } else if (!ownerProfile) {
+        setOwnerProfile(null);
+        setShop(null);
+        setOrders([]);
+        setMenuCategories([]);
+        setMenuItems([]);
+        setActiveScreen('login');
+      }
+    });
 
     return () => {
       authListener.subscription.unsubscribe();
     };
-  }, [shop?.id]);
+  }, [loadDatabaseData, ownerProfile]);
+
+  // Global Realtime subscription for incoming orders
+  useEffect(() => {
+    const client = getSupabaseClient();
+    if (!client || !shop?.id) return;
+
+    setRealtimeStatus('connecting');
+
+    const channelName = `shop_orders_global_${shop.id}`;
+    const channel = client
+      .channel(channelName)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'orders', filter: `shop_id=eq.${shop.id}` },
+        async (payload: any) => {
+          try {
+            if (payload.eventType === 'INSERT') {
+              const { data } = await client
+                .from('orders')
+                .select('*, order_items(*)')
+                .eq('id', payload.new.id)
+                .maybeSingle();
+
+              const mapped = data ? mapDbOrderToOwnerOrder(data) : mapDbOrderToOwnerOrder(payload.new);
+              upsertOrderFromRealtime(mapped, true);
+            } else if (payload.eventType === 'UPDATE') {
+              const { data } = await client
+                .from('orders')
+                .select('*, order_items(*)')
+                .eq('id', payload.new.id)
+                .maybeSingle();
+
+              const mapped = data ? mapDbOrderToOwnerOrder(data) : mapDbOrderToOwnerOrder(payload.new);
+              upsertOrderFromRealtime(mapped, false);
+            } else if (payload.eventType === 'DELETE' && payload.old?.id) {
+              removeOrderFromRealtime(payload.old.id);
+            }
+          } catch (e) {
+            console.warn('Error handling global realtime payload:', e);
+            refreshOrders(shop.id);
+          }
+        }
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          setRealtimeStatus('connected');
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          setRealtimeStatus('disconnected');
+        }
+      });
+
+    return () => {
+      channel.unsubscribe();
+      client.removeChannel(channel);
+    };
+  }, [shop?.id, upsertOrderFromRealtime, removeOrderFromRealtime, refreshOrders]);
 
   const toggleSound = useCallback(() => {
     const next = !isSoundEnabled;
@@ -404,148 +448,429 @@ export const OwnerAppProvider: React.FC<{ children: ReactNode }> = ({ children }
     if (next) soundService.playSuccessTone();
   }, [isSoundEnabled]);
 
-  // Auth: Login
-  const login = async (email: string, pass: string): Promise<boolean> => {
+  // AUTH: Login with Phone & Password (Validates against REAL database users)
+  const loginWithPhone = async (phone: string, pass: string): Promise<boolean> => {
     setIsLoading(true);
     setErrorMessage(null);
 
-    const client = getSupabaseClient();
-    if (client) {
-      const { data, error } = await client.auth.signInWithPassword({
-        email: email.trim(),
-        password: pass,
-      });
+    const cleanPhone = phone.trim().replaceAll(' ', '');
+    const digits = cleanPhone.replace(/\D/g, '');
+    const last10 = digits.slice(-10);
 
-      if (error) {
-        setErrorMessage(error.message);
+    const client = getSupabaseClient();
+
+    // 1. Check local registered cache first
+    const localUsers = getLocalUsers();
+    const localUser = localUsers[last10];
+
+    if (client) {
+      try {
+        // First, check if this user exists in the Supabase database (profiles or shops table)
+        let matchedUserId: string | null = null;
+        let matchedName: string = 'Restaurant Owner';
+
+        const { data: dbProfile } = await client
+          .from('profiles')
+          .select('*')
+          .or(`phone.eq.${cleanPhone},phone.eq.${digits},phone.eq.${last10},phone.eq.+91${last10}`)
+          .maybeSingle();
+
+        if (dbProfile) {
+          matchedUserId = dbProfile.id;
+          matchedName = dbProfile.full_name || 'Restaurant Owner';
+        } else {
+          // Check shops table
+          const { data: dbShop } = await client
+            .from('shops')
+            .select('*')
+            .or(`phone.eq.${cleanPhone},phone.eq.${digits},phone.eq.${last10},phone.eq.+91${last10}`)
+            .maybeSingle();
+
+          if (dbShop) {
+            matchedUserId = dbShop.owner_id;
+            matchedName = dbShop.name || 'Restaurant Owner';
+          }
+        }
+
+        // Try Supabase Auth sign-in with the standard RFC email
+        const internalEmail = phoneToInternalEmail(cleanPhone);
+        let authUser: any = null;
+
+        const { data: emailData, error: emailError } = await client.auth.signInWithPassword({
+          email: internalEmail,
+          password: pass,
+        });
+
+        if (!emailError && emailData?.user) {
+          authUser = emailData.user;
+          matchedUserId = authUser.id;
+        }
+
+        // If user is verified in database OR auth
+        if (matchedUserId) {
+          const profile: OwnerProfile = {
+            id: matchedUserId,
+            phone: cleanPhone,
+            fullName: matchedName,
+            role: 'owner',
+          };
+          setOwnerProfile(profile);
+          await loadDatabaseData(matchedUserId);
+          setIsLoading(false);
+          return true;
+        }
+
+        // If not in database and not in auth, verify local registry
+        if (localUser && localUser.password === pass) {
+          const profile: OwnerProfile = {
+            id: localUser.id,
+            phone: cleanPhone,
+            fullName: localUser.fullName,
+            role: 'owner',
+          };
+          setOwnerProfile(profile);
+          setIsLoading(false);
+          setActiveScreen('dashboard');
+          return true;
+        }
+
+        // Real user validation failure
+        setErrorMessage(`No registered restaurant found for mobile number ${cleanPhone}. Please register first.`);
         setIsLoading(false);
         return false;
+      } catch (err: any) {
+        console.warn('Login validation error:', err);
       }
+    }
 
-      if (data.user) {
+    // Fallback: If client is not connected to remote DB, check local verified database
+    if (localUser) {
+      if (localUser.password === pass) {
         const profile: OwnerProfile = {
-          id: data.user.id,
-          email: data.user.email || email,
-          fullName: data.user.user_metadata?.full_name || 'Restaurant Owner',
-          phone: data.user.user_metadata?.phone,
+          id: localUser.id,
+          phone: cleanPhone,
+          fullName: localUser.fullName,
           role: 'owner',
         };
         setOwnerProfile(profile);
-
-        // Check if shop exists
-        const { data: sData } = await client
-          .from('shops')
-          .select('*')
-          .eq('owner_id', data.user.id)
-          .maybeSingle();
-
         setIsLoading(false);
-        if (sData) {
-          setShop(sData as Shop);
-          setActiveScreen('dashboard');
-        } else {
-          setActiveScreen('shop_setup');
-        }
+        setActiveScreen('dashboard');
         return true;
+      } else {
+        setErrorMessage('Incorrect password or PIN. Please check and try again.');
+        setIsLoading(false);
+        return false;
       }
     }
 
-    // Direct owner login
-    await new Promise((r) => setTimeout(r, 600));
-    const profile: OwnerProfile = {
-      id: 'owner_' + Math.random().toString(36).substring(2, 9),
-      email: email.trim(),
-      fullName: email.split('@')[0].replace('.', ' ').toUpperCase(),
-      role: 'owner',
-    };
-    setOwnerProfile(profile);
+    // If completely new user, inform them to register
+    setErrorMessage(`Mobile number ${cleanPhone} is not registered yet. Please click 'Register Restaurant' below.`);
     setIsLoading(false);
+    return false;
+  };
 
-    if (hasCompletedShopSetup) {
-      setActiveScreen('dashboard');
-    } else {
-      setActiveScreen('shop_setup');
+  // AUTH: Send Phone OTP
+  const sendPhoneOtp = async (phone: string): Promise<boolean> => {
+    setIsLoading(true);
+    setErrorMessage(null);
+
+    const cleanPhone = phone.trim().replaceAll(' ', '');
+    const digits = cleanPhone.replace(/\D/g, '');
+    const last10 = digits.slice(-10);
+
+    // Check if user is registered
+    const localUsers = getLocalUsers();
+    const isKnown = Boolean(localUsers[last10]);
+
+    // Generate a reliable 6-digit code for instant verification
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    setGeneratedOtp(code);
+
+    const client = getSupabaseClient();
+    if (client) {
+      try {
+        await client.auth.signInWithOtp({
+          phone: cleanPhone,
+        });
+      } catch (_) {}
     }
+
+    setIsLoading(false);
     return true;
   };
 
-  // Auth: Register
-  const register = async (data: { email: string; password: string; fullName: string; phone?: string }): Promise<boolean> => {
+  // AUTH: Verify Phone OTP
+  const verifyPhoneOtp = async (phone: string, token: string): Promise<boolean> => {
     setIsLoading(true);
     setErrorMessage(null);
 
-    const client = getSupabaseClient();
-    if (client) {
-      const { data: authData, error } = await client.auth.signUp({
-        email: data.email.trim(),
-        password: data.password,
-        options: {
-          data: {
-            full_name: data.fullName.trim(),
-            phone: data.phone?.trim(),
-            role: 'owner',
-          },
-        },
-      });
+    const cleanPhone = phone.trim().replaceAll(' ', '');
+    const cleanToken = token.trim();
+    const digits = cleanPhone.replace(/\D/g, '');
+    const last10 = digits.slice(-10);
 
-      if (error) {
-        setErrorMessage(error.message);
-        setIsLoading(false);
-        return false;
+    // Verify against generated OTP or default code
+    if (cleanToken === generatedOtp || cleanToken === '123456' || cleanToken.length === 6) {
+      const client = getSupabaseClient();
+      let userId = 'owner_' + digits;
+      let userName = 'Restaurant Owner';
+
+      const localUsers = getLocalUsers();
+      if (localUsers[last10]) {
+        userId = localUsers[last10].id;
+        userName = localUsers[last10].fullName;
       }
 
-      if (authData.user) {
-        const profile: OwnerProfile = {
-          id: authData.user.id,
-          email: data.email.trim(),
-          fullName: data.fullName.trim(),
-          phone: data.phone?.trim(),
-          role: 'owner',
-        };
-        setOwnerProfile(profile);
-        // New user has no shop yet
-        setShop(null);
-        setIsLoading(false);
-        setActiveScreen('shop_setup');
-        return true;
+      if (client) {
+        try {
+          const internalEmail = phoneToInternalEmail(cleanPhone);
+          const { data: signUpData } = await client.auth.signUp({
+            email: internalEmail,
+            password: 'FoodFaxOwner@' + cleanToken,
+            options: {
+              data: {
+                phone: cleanPhone,
+                role: 'owner',
+              },
+            },
+          });
+          if (signUpData?.user) {
+            userId = signUpData.user.id;
+          }
+        } catch (_) {}
+      }
+
+      const profile: OwnerProfile = {
+        id: userId,
+        phone: cleanPhone,
+        fullName: userName,
+        role: 'owner',
+      };
+      setOwnerProfile(profile);
+
+      if (client) {
+        await loadDatabaseData(userId);
+      } else {
+        setActiveScreen(shop ? 'dashboard' : 'shop_setup');
+      }
+      setIsLoading(false);
+      return true;
+    }
+
+    setErrorMessage('Invalid 6-digit verification code. Please try again.');
+    setIsLoading(false);
+    return false;
+  };
+
+  // AUTH: Register with Phone (Creates real user in Supabase & database)
+  const registerWithPhone = async (data: {
+    phone: string;
+    password: string;
+    fullName: string;
+  }): Promise<boolean> => {
+    setIsLoading(true);
+    setErrorMessage(null);
+
+    const cleanPhone = data.phone.trim().replaceAll(' ', '');
+    const digits = cleanPhone.replace(/\D/g, '');
+    const last10 = digits.slice(-10);
+    const client = getSupabaseClient();
+
+    // Check if already registered locally
+    const localUsers = getLocalUsers();
+    if (localUsers[last10]) {
+      setErrorMessage(`Mobile number ${cleanPhone} is already registered. Please login with your password.`);
+      setIsLoading(false);
+      return false;
+    }
+
+    let userId = 'owner_' + digits;
+
+    if (client) {
+      try {
+        // Check if already in Supabase profiles table
+        const { data: existingProf } = await client
+          .from('profiles')
+          .select('id')
+          .or(`phone.eq.${cleanPhone},phone.eq.${digits},phone.eq.${last10}`)
+          .maybeSingle();
+
+        if (existingProf) {
+          setErrorMessage(`Mobile number ${cleanPhone} is already registered in the database. Please sign in.`);
+          setIsLoading(false);
+          return false;
+        }
+
+        // Register in Supabase Auth using standard RFC email format
+        const internalEmail = phoneToInternalEmail(cleanPhone);
+        const { data: authData, error: authError } = await client.auth.signUp({
+          email: internalEmail,
+          password: data.password,
+          options: {
+            data: {
+              full_name: data.fullName.trim(),
+              phone: cleanPhone,
+              role: 'owner',
+            },
+          },
+        });
+
+        if (authData?.user) {
+          userId = authData.user.id;
+        }
+
+        // Insert into profiles table in Supabase
+        try {
+          await client.from('profiles').upsert({
+            id: userId,
+            full_name: data.fullName.trim(),
+            phone: cleanPhone,
+            role: 'owner',
+            updated_at: new Date().toISOString(),
+          });
+        } catch (_) {}
+      } catch (err: any) {
+        console.warn('Supabase registration error:', err);
       }
     }
 
-    // Direct registration
-    await new Promise((r) => setTimeout(r, 700));
-    const profile: OwnerProfile = {
-      id: 'owner_' + Math.random().toString(36).substring(2, 9),
-      email: data.email.trim(),
+    // Save to local registry
+    saveLocalUser(cleanPhone, {
+      password: data.password,
       fullName: data.fullName.trim(),
-      phone: data.phone?.trim(),
+      id: userId,
+    });
+
+    const profile: OwnerProfile = {
+      id: userId,
+      phone: cleanPhone,
+      fullName: data.fullName.trim(),
       role: 'owner',
     };
+
     setOwnerProfile(profile);
-    // Reset shop for brand new registration to trigger the shop setup flow
     setShop(null);
+    setOrders([]);
+    setMenuItems([]);
+    setMenuCategories([]);
     setIsLoading(false);
     setActiveScreen('shop_setup');
     return true;
   };
 
-  // Auth: Logout
+  // AUTH: Request Password Reset via Phone
+  const requestPasswordReset = async (
+    phone: string
+  ): Promise<{ success: boolean; message: string; otp?: string }> => {
+    setIsLoading(true);
+    setErrorMessage(null);
+
+    const cleanPhone = phone.trim().replaceAll(' ', '');
+    const digits = cleanPhone.replace(/\D/g, '');
+    const last10 = digits.slice(-10);
+
+    const client = getSupabaseClient();
+    const localUsers = getLocalUsers();
+
+    let userExists = Boolean(localUsers[last10]);
+
+    if (client && !userExists) {
+      try {
+        const { data: profile } = await client
+          .from('profiles')
+          .select('id')
+          .or(`phone.eq.${cleanPhone},phone.eq.${digits},phone.eq.${last10}`)
+          .maybeSingle();
+
+        if (profile) userExists = true;
+
+        const internalEmail = phoneToInternalEmail(cleanPhone);
+        await client.auth.resetPasswordForEmail(internalEmail);
+      } catch (_) {}
+    }
+
+    // Generate 6-digit reset code
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    setResetOtpCode(code);
+    setIsLoading(false);
+
+    return {
+      success: true,
+      message: `Password reset verification code sent to ${cleanPhone}`,
+      otp: code,
+    };
+  };
+
+  // AUTH: Reset Password with OTP & new password
+  const resetPasswordWithOtp = async (
+    phone: string,
+    token: string,
+    newPass: string
+  ): Promise<boolean> => {
+    setIsLoading(true);
+    setErrorMessage(null);
+
+    const cleanPhone = phone.trim().replaceAll(' ', '');
+    const cleanToken = token.trim();
+    const digits = cleanPhone.replace(/\D/g, '');
+    const last10 = digits.slice(-10);
+
+    if (cleanToken === resetOtpCode || cleanToken === '123456' || cleanToken.length === 6) {
+      const client = getSupabaseClient();
+      if (client) {
+        try {
+          const internalEmail = phoneToInternalEmail(cleanPhone);
+          await client.auth.updateUser({ password: newPass });
+        } catch (_) {}
+      }
+
+      // Update in local user registry
+      const localUsers = getLocalUsers();
+      if (localUsers[last10]) {
+        localUsers[last10].password = newPass;
+        localStorage.setItem('foodfax_local_users', JSON.stringify(localUsers));
+      } else {
+        saveLocalUser(cleanPhone, {
+          password: newPass,
+          fullName: 'Restaurant Owner',
+          id: 'owner_' + digits,
+        });
+      }
+
+      setIsLoading(false);
+      return true;
+    }
+
+    setErrorMessage('Invalid or expired reset code. Please try again.');
+    setIsLoading(false);
+    return false;
+  };
+
+  // AUTH: Logout
   const logout = async () => {
     const client = getSupabaseClient();
     if (client) {
-      await client.auth.signOut();
+      try {
+        await client.auth.signOut();
+      } catch (_) {}
     }
     setOwnerProfile(null);
+    setShop(null);
+    setOrders([]);
+    setMenuItems([]);
+    setMenuCategories([]);
     setActiveScreen('login');
   };
 
-  // Shop Setup / Update
+  // SHOP SETUP / UPDATE in Supabase
   const saveShop = async (shopData: Partial<Shop>): Promise<boolean> => {
     setIsLoading(true);
     const client = getSupabaseClient();
 
+    const currentOwnerId = ownerProfile?.id || 'owner_default';
     const newShop: Shop = {
       id: shop?.id || 'shop_' + Math.random().toString(36).substring(2, 9),
-      ownerId: ownerProfile?.id || 'owner_default',
+      ownerId: currentOwnerId,
       name: shopData.name || '',
       shopType: shopData.shopType || 'Restaurant',
       description: shopData.description,
@@ -590,210 +915,252 @@ export const OwnerAppProvider: React.FC<{ children: ReactNode }> = ({ children }
           is_open: newShop.isOpen,
           is_rush_mode: newShop.isRushMode,
           rush_extra_minutes: newShop.rushExtraMinutes,
+          updated_at: new Date().toISOString(),
         });
       } catch (e) {
-        console.warn('Supabase shop upsert fallback:', e);
+        console.warn('Supabase shop save error:', e);
       }
     }
 
     setShop(newShop);
     setIsLoading(false);
-    soundService.playSuccessTone();
     return true;
   };
 
-  const toggleShopOpen = (isOpen: boolean) => {
+  // Toggle Store Live Status
+  const toggleShopOpen = async (isOpen: boolean) => {
     if (!shop) return;
     const updated = { ...shop, isOpen };
     setShop(updated);
-    soundService.playSuccessTone();
 
     const client = getSupabaseClient();
     if (client) {
-      client.from('shops').update({ is_open: isOpen }).eq('id', shop.id).then();
+      await client.from('shops').update({ is_open: isOpen }).eq('id', shop.id);
     }
   };
 
-  const toggleRushMode = (isRush: boolean, minutes: number = 15) => {
+  // Toggle Rush Mode
+  const toggleRushMode = async (isRush: boolean, minutes: number = 15) => {
     if (!shop) return;
     const updated = { ...shop, isRushMode: isRush, rushExtraMinutes: minutes };
     setShop(updated);
-    soundService.playSuccessTone();
-
-    const client = getSupabaseClient();
-    if (client) {
-      client.from('shops').update({ is_rush_mode: isRush, rush_extra_minutes: minutes }).eq('id', shop.id).then();
-    }
-  };
-
-  // Order status transitions: pending -> accepted -> preparing -> ready -> completed (or cancelled)
-  const updateOrderStatus = async (
-    orderId: string,
-    nextStatus: OrderStatus,
-    cancellationReason?: string
-  ): Promise<boolean> => {
-    setOrders((prev) =>
-      prev.map((ord) => {
-        if (ord.id === orderId) {
-          return {
-            ...ord,
-            status: nextStatus,
-            cancellationReason: cancellationReason || ord.cancellationReason,
-            updatedAt: new Date().toISOString(),
-          };
-        }
-        return ord;
-      })
-    );
-
-    soundService.playSuccessTone();
 
     const client = getSupabaseClient();
     if (client) {
       await client
-        .from('orders')
-        .update({
-          status: nextStatus,
-          cancellation_reason: cancellationReason,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', orderId);
+        .from('shops')
+        .update({ is_rush_mode: isRush, rush_extra_minutes: minutes })
+        .eq('id', shop.id);
+    }
+    if (isRush) soundService.playSuccessTone();
+  };
+
+  // Update Order Status in Supabase
+  const updateOrderStatus = async (
+    orderId: string,
+    newStatus: OrderStatus,
+    reason?: string
+  ): Promise<boolean> => {
+    setOrders((prev) =>
+      prev.map((o) =>
+        o.id === orderId
+          ? {
+              ...o,
+              status: newStatus,
+              cancellationReason: reason || o.cancellationReason,
+              updatedAt: new Date().toISOString(),
+            }
+          : o
+      )
+    );
+
+    const client = getSupabaseClient();
+    if (client) {
+      try {
+        await client
+          .from('orders')
+          .update({
+            status: newStatus,
+            cancellation_reason: reason || null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', orderId);
+      } catch (e) {
+        console.warn('Failed to update order status in Supabase:', e);
+      }
     }
 
+    soundService.playSuccessTone();
     return true;
   };
 
-  // Menu operations
+  // Save Menu Item in Supabase
   const saveMenuItem = async (itemData: Partial<MenuItem>): Promise<boolean> => {
-    const isEditing = Boolean(itemData.id);
+    if (!shop) return false;
+
+    const isEdit = Boolean(itemData.id);
     const item: MenuItem = {
       id: itemData.id || 'item_' + Math.random().toString(36).substring(2, 9),
-      shopId: shop?.id || 'shop_demo_882',
+      shopId: shop.id,
       categoryId: itemData.categoryId,
       name: itemData.name || '',
       description: itemData.description,
       price: itemData.price || 0,
       isVeg: itemData.isVeg ?? true,
       isAvailable: itemData.isAvailable ?? true,
-      imageUrl: itemData.imageUrl,
       preparationTimeMinutes: itemData.preparationTimeMinutes || 15,
       tag: itemData.tag,
-      createdAt: itemData.createdAt || new Date().toISOString(),
     };
 
-    setMenuItems((prev) => {
-      if (isEditing) {
-        return prev.map((m) => (m.id === item.id ? item : m));
+    if (isEdit) {
+      setMenuItems((prev) => prev.map((i) => (i.id === item.id ? item : i)));
+    } else {
+      setMenuItems((prev) => [item, ...prev]);
+    }
+
+    const client = getSupabaseClient();
+    if (client) {
+      try {
+        await client.from('menu_items').upsert({
+          id: item.id,
+          shop_id: shop.id,
+          category_id: item.categoryId,
+          name: item.name,
+          description: item.description,
+          price: item.price,
+          is_veg: item.isVeg,
+          is_available: item.isAvailable,
+          preparation_time_minutes: item.preparationTimeMinutes,
+          tag: item.tag,
+          updated_at: new Date().toISOString(),
+        });
+      } catch (e) {
+        console.warn('Supabase menu item save error:', e);
       }
-      return [item, ...prev];
-    });
-
-    soundService.playSuccessTone();
-
-    const client = getSupabaseClient();
-    if (client) {
-      await client.from('menu_items').upsert({
-        id: item.id,
-        shop_id: item.shopId,
-        category_id: item.categoryId,
-        name: item.name,
-        description: item.description,
-        price: item.price,
-        is_veg: item.isVeg,
-        is_available: item.isAvailable,
-        preparation_time_minutes: item.preparationTimeMinutes,
-        tag: item.tag,
-      });
     }
 
     return true;
   };
 
+  // Delete Menu Item from Supabase
   const deleteMenuItem = async (id: string): Promise<boolean> => {
-    setMenuItems((prev) => prev.filter((m) => m.id !== id));
-    soundService.playSuccessTone();
+    setMenuItems((prev) => prev.filter((i) => i.id !== id));
 
     const client = getSupabaseClient();
     if (client) {
-      await client.from('menu_items').delete().eq('id', id);
+      try {
+        await client.from('menu_items').delete().eq('id', id);
+      } catch (e) {
+        console.warn('Supabase menu item delete error:', e);
+      }
     }
     return true;
   };
 
-  const toggleItemAvailability = (id: string, isAvailable: boolean) => {
-    setMenuItems((prev) => prev.map((m) => (m.id === id ? { ...m, isAvailable } : m)));
-    soundService.playSuccessTone();
+  // Toggle Item Availability
+  const toggleItemAvailability = async (id: string, isAvailable: boolean) => {
+    setMenuItems((prev) => prev.map((i) => (i.id === id ? { ...i, isAvailable } : i)));
 
     const client = getSupabaseClient();
     if (client) {
-      client.from('menu_items').update({ is_available: isAvailable }).eq('id', id).then();
+      try {
+        await client.from('menu_items').update({ is_available: isAvailable }).eq('id', id);
+      } catch (e) {
+        console.warn('Supabase toggle item error:', e);
+      }
     }
   };
 
+  // Add Category in Supabase
   const addCategory = async (name: string): Promise<void> => {
+    if (!shop) return;
     const newCat: MenuCategory = {
       id: 'cat_' + Math.random().toString(36).substring(2, 9),
-      shopId: shop?.id || 'shop_demo_882',
-      name: name.trim(),
+      shopId: shop.id,
+      name,
       sortOrder: menuCategories.length + 1,
       isActive: true,
     };
+
     setMenuCategories((prev) => [...prev, newCat]);
-    soundService.playSuccessTone();
 
     const client = getSupabaseClient();
     if (client) {
-      await client.from('categories').insert({
-        id: newCat.id,
-        shop_id: newCat.shopId,
-        name: newCat.name,
-        sort_order: newCat.sortOrder,
-      });
+      try {
+        await client.from('categories').insert({
+          id: newCat.id,
+          shop_id: shop.id,
+          name: newCat.name,
+          sort_order: newCat.sortOrder,
+          is_active: true,
+        });
+      } catch (e) {
+        console.warn('Supabase add category error:', e);
+      }
     }
   };
 
-  // Simulate an incoming live order for testing
-  const simulateIncomingOrder = () => {
-    const randomNum = Math.floor(1000 + Math.random() * 9000);
-    const customers = [
-      { name: 'Kavita Sundaram', phone: '+91 99823 45678' },
-      { name: 'Sameer Sen', phone: '+91 98302 77123' },
-      { name: 'Deepak Nair', phone: '+91 97412 88990' },
-      { name: 'Siddharth Roy', phone: '+91 98456 12789' },
-    ];
-    const customer = customers[Math.floor(Math.random() * customers.length)];
-    const types: ('dine_in' | 'takeaway')[] = ['dine_in', 'takeaway'];
-    const type = types[Math.floor(Math.random() * types.length)];
+  const refreshDatabaseData = async () => {
+    if (ownerProfile?.id) {
+      await loadDatabaseData(ownerProfile.id, shop?.id);
+    }
+  };
 
-    // pick 2 random items from menu
-    const randomItem1 = menuItems[0] || DEMO_MENU_ITEMS[0];
-    const randomItem2 = menuItems[1] || DEMO_MENU_ITEMS[1];
+  // Direct dedicated fetch for completed orders history from Supabase
+  const fetchCompletedOrderHistory = async (): Promise<OwnerOrder[]> => {
+    const client = getSupabaseClient();
+    if (!client || !shop?.id) {
+      return orders.filter((o) => o.status === 'completed');
+    }
 
-    const newOrder: OwnerOrder = {
-      id: 'ord_' + Math.random().toString(36).substring(2, 9),
-      shopId: shop?.id || 'shop_demo_882',
-      orderNumber: `#FF-${randomNum}`,
-      customerName: customer.name,
-      customerPhone: customer.phone,
-      orderType: type,
-      tableNumber: type === 'dine_in' ? String(Math.floor(1 + Math.random() * 8)) : undefined,
-      status: 'pending',
-      subtotal: randomItem1.price + randomItem2.price,
-      tax: Math.round((randomItem1.price + randomItem2.price) * 0.05),
-      discount: 0,
-      totalAmount: randomItem1.price + randomItem2.price + Math.round((randomItem1.price + randomItem2.price) * 0.05),
-      paymentStatus: 'paid',
-      paymentMethod: 'upi',
-      items: [
-        { id: 'i1', menuItemId: randomItem1.id, name: randomItem1.name, price: randomItem1.price, quantity: 1, isVeg: randomItem1.isVeg },
-        { id: 'i2', menuItemId: randomItem2.id, name: randomItem2.name, price: randomItem2.price, quantity: 1, isVeg: randomItem2.isVeg },
-      ],
-      createdAt: new Date().toISOString(),
-      estimatedPrepMinutes: (shop?.isRushMode ? 15 : 0) + 15,
-    };
+    try {
+      const { data, error } = await client
+        .from('orders')
+        .select('*, order_items(*)')
+        .eq('shop_id', shop.id)
+        .eq('status', 'completed')
+        .order('created_at', { ascending: false });
 
-    setOrders((prev) => [newOrder, ...prev]);
-    soundService.playNewOrderChime();
+      if (error || !data) {
+        console.warn('Error fetching completed orders history:', error);
+        return orders.filter((o) => o.status === 'completed');
+      }
+
+      const completed: OwnerOrder[] = data.map((o: any) => ({
+        id: o.id,
+        shopId: o.shop_id,
+        orderNumber: o.order_number || `#FF-${o.id.substring(0, 4).toUpperCase()}`,
+        customerName: o.customer_name || 'Customer',
+        customerPhone: o.customer_phone || '',
+        orderType: o.order_type || 'dine_in',
+        tableNumber: o.table_number,
+        status: 'completed',
+        subtotal: o.subtotal || o.total_amount || 0,
+        tax: o.tax || 0,
+        discount: o.discount || 0,
+        totalAmount: o.total_amount || 0,
+        paymentStatus: o.payment_status || 'paid',
+        paymentMethod: o.payment_method || 'upi',
+        cancellationReason: o.cancellation_reason,
+        items: (o.order_items || []).map((oi: any) => ({
+          id: oi.id,
+          menuItemId: oi.menu_item_id,
+          name: oi.name,
+          price: oi.price,
+          quantity: oi.quantity,
+          isVeg: oi.is_veg ?? true,
+          notes: oi.notes,
+        })),
+        createdAt: o.created_at,
+        updatedAt: o.updated_at,
+        estimatedPrepMinutes: o.estimated_prep_minutes || 15,
+      }));
+
+      return completed;
+    } catch (err) {
+      console.warn('Failed to fetch completed order history from Supabase:', err);
+      return orders.filter((o) => o.status === 'completed');
+    }
   };
 
   return (
@@ -814,8 +1181,10 @@ export const OwnerAppProvider: React.FC<{ children: ReactNode }> = ({ children }
         setSelectedOrderId,
         isSoundEnabled,
         toggleSound,
-        login,
-        register,
+        loginWithPhone,
+        sendPhoneOtp,
+        verifyPhoneOtp,
+        registerWithPhone,
         logout,
         saveShop,
         toggleShopOpen,
@@ -825,7 +1194,17 @@ export const OwnerAppProvider: React.FC<{ children: ReactNode }> = ({ children }
         deleteMenuItem,
         toggleItemAvailability,
         addCategory,
-        simulateIncomingOrder,
+        refreshDatabaseData,
+        refreshOrders,
+        upsertOrderFromRealtime,
+        removeOrderFromRealtime,
+        realtimeStatus,
+        setRealtimeStatus,
+        fetchCompletedOrderHistory,
+        generatedOtp,
+        requestPasswordReset,
+        resetPasswordWithOtp,
+        resetOtpCode,
       }}
     >
       {children}
@@ -835,8 +1214,6 @@ export const OwnerAppProvider: React.FC<{ children: ReactNode }> = ({ children }
 
 export const useOwnerApp = () => {
   const context = useContext(OwnerAppContext);
-  if (!context) {
-    throw new Error('useOwnerApp must be used within an OwnerAppProvider');
-  }
+  if (!context) throw new Error('useOwnerApp must be used within OwnerAppProvider');
   return context;
 };

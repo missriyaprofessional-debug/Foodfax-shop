@@ -24,17 +24,14 @@ import { ProfileScreen } from './screens/ProfileScreen';
 import { ShopSettingsModal } from './screens/ShopSettingsModal';
 import { ShopProfileModal } from './screens/ShopProfileModal';
 import { NotificationsModal } from './screens/NotificationsModal';
-import { FlutterCodeViewerModal } from './screens/FlutterCodeViewerModal';
 import { MenuItem } from './types';
 
 const MainAppContent: React.FC = () => {
   const { activeScreen, isAuthenticated, hasCompletedShopSetup } = useOwnerApp();
 
-  const [isMobileFrame, setIsMobileFrame] = useState<boolean>(true);
   const [showSettingsModal, setShowSettingsModal] = useState<boolean>(false);
   const [showNotificationsModal, setShowNotificationsModal] = useState<boolean>(false);
   const [showShopProfileModal, setShowShopProfileModal] = useState<boolean>(false);
-  const [showCodeViewerModal, setShowCodeViewerModal] = useState<boolean>(false);
   const [editingMenuItem, setEditingMenuItem] = useState<MenuItem | null>(null);
   const [showAddMenuModal, setShowAddMenuModal] = useState<boolean>(false);
 
@@ -45,15 +42,12 @@ const MainAppContent: React.FC = () => {
     !['splash', 'onboarding', 'login', 'register', 'shop_setup'].includes(activeScreen);
 
   return (
-    <MobileFrame isMobileFrame={isMobileFrame}>
+    <MobileFrame isMobileFrame={false}>
       {/* Top App Bar on internal screens */}
       {isInternalApp && (
         <TopAppBar
-          isMobileFrame={isMobileFrame}
-          onToggleMobileFrame={() => setIsMobileFrame(!isMobileFrame)}
           onOpenSettings={() => setShowSettingsModal(true)}
           onOpenNotifications={() => setShowNotificationsModal(true)}
-          onOpenCodeViewer={() => setShowCodeViewerModal(true)}
         />
       )}
 
@@ -81,7 +75,6 @@ const MainAppContent: React.FC = () => {
             onOpenSettings={() => setShowSettingsModal(true)}
             onOpenNotifications={() => setShowNotificationsModal(true)}
             onOpenShopProfile={() => setShowShopProfileModal(true)}
-            onOpenCodeViewer={() => setShowCodeViewerModal(true)}
           />
         )}
       </main>
@@ -116,11 +109,6 @@ const MainAppContent: React.FC = () => {
       {/* Live Store Notifications Modal */}
       {showNotificationsModal && (
         <NotificationsModal onClose={() => setShowNotificationsModal(false)} />
-      )}
-
-      {/* Flutter Dart Code Viewer Modal */}
-      {showCodeViewerModal && (
-        <FlutterCodeViewerModal onClose={() => setShowCodeViewerModal(false)} />
       )}
     </MobileFrame>
   );
