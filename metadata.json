@@ -1,0 +1,6 @@
+{
+  "name": "FoodFax Owner App",
+  "description": "Shop Owner portal and Flutter mobile experience for FoodFax. Manage orders, menu, shop settings, rush mode, and live order tracking.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
