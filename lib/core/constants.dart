@@ -6,7 +6,7 @@ class AppConstants {
   // Configured with owner project credentials
   static const String supabaseUrl = String.fromEnvironment(
     'SUPABASE_URL',
-    defaultValue: 'https://your-project.supabase.co',
+    defaultValue: 'https://aftmqdmiwvpbpsdmsfbu.supabase.co',
   );
   static const String supabaseAnonKey = String.fromEnvironment(
     'SUPABASE_ANON_KEY',

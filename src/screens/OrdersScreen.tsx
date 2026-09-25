@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useOwnerApp, mapDbOrderToOwnerOrder } from '../context/OwnerAppContext';
 import { OrderStatus, OwnerOrder } from '../types';
-import { getSupabaseClient } from '../services/supabaseClient';
+import { getSupabaseClient } from '../lib/supabaseClient';
 import { soundService } from '../services/soundService';
 import { 
   Search, 
@@ -196,38 +196,50 @@ export const OrdersScreen: React.FC = () => {
     setIsCreatingTestOrder(true);
 
     try {
-      const randomNum = Math.floor(1000 + Math.random() * 9000);
+      const randomNum = Math.floor(100 + Math.random() * 900);
       const testId = `ord_${Date.now()}`;
       const sampleNames = ['Rohan Sharma', 'Priya Verma', 'Aarav Gupta', 'Neha Patel', 'Vikram Singh'];
       const sampleCustomer = sampleNames[Math.floor(Math.random() * sampleNames.length)];
+      const isDineIn = Math.random() > 0.5;
 
+      // Matches exact columns and CHECK constraints of public.orders
       const { error: orderError } = await client.from('orders').insert({
         id: testId,
         shop_id: shop.id,
-        order_number: `#FF-${randomNum}`,
+        shop_name: shop.name || 'Food Stall',
+        shop_image: shop.logoUrl || null,
+        shop_location: shop.area || shop.address || 'Counter 1',
+        customer_id: null,
         customer_name: sampleCustomer,
         customer_phone: '9876543210',
-        order_type: Math.random() > 0.5 ? 'dine_in' : 'takeaway',
-        table_number: Math.random() > 0.5 ? `T-0${Math.floor(1 + Math.random() * 8)}` : null,
-        status: 'pending',
+        token_number: `#FF-${randomNum}`,
+        order_type: isDineIn ? 'DINE_IN' : 'TAKEAWAY',
+        table_number: isDineIn ? `T-0${Math.floor(1 + Math.random() * 8)}` : null,
+        payment_method: Math.random() > 0.5 ? 'PAY_ONLINE' : 'CASH_AT_COUNTER',
+        payment_status: 'PAID',
+        order_status: 'PENDING',
         subtotal: 240,
-        tax: 12,
-        discount: 0,
-        total_amount: 252,
-        payment_status: 'paid',
-        payment_method: 'upi',
+        total: 240,
+        estimated_preparation_minutes: '5-10',
+        is_demo: false,
         created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
       });
 
-      if (orderError) throw orderError;
+      if (orderError) {
+        console.error('Order simulation error:', orderError);
+        throw orderError;
+      }
 
+      // Matches exact columns of public.order_items
       await client.from('order_items').insert({
-        id: `item_${Date.now()}`,
+        id: `item_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
         order_id: testId,
         name: 'Special Paneer Tikka Masala',
         price: 240,
         quantity: 1,
         is_veg: true,
+        created_at: new Date().toISOString(),
       });
     } catch (err) {
       console.warn('Error simulating realtime order in Supabase:', err);
@@ -305,7 +317,10 @@ export const OrdersScreen: React.FC = () => {
             
             {/* Real-Time Subscription Connection Status Pill */}
             {realtimeStatus === 'connected' ? (
-              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-emerald-500/10 border border-emerald-500/30 rounded-full text-[11px] font-bold text-emerald-400">
+              <div
+                className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-emerald-500/10 border border-emerald-500/30 rounded-full text-[11px] font-bold text-emerald-400"
+                title="Supabase Real-time Connected"
+              >
                 <span className="relative flex h-2 w-2">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
                   <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
@@ -315,15 +330,16 @@ export const OrdersScreen: React.FC = () => {
             ) : realtimeStatus === 'connecting' ? (
               <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-amber-500/10 border border-amber-500/30 rounded-full text-[11px] font-bold text-amber-400">
                 <Loader2 className="w-3 h-3 animate-spin" />
-                <span>Connecting...</span>
+                <span>Connecting Real-time...</span>
               </div>
             ) : (
               <button
                 onClick={handleManualRefresh}
-                className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-red-500/10 border border-red-500/30 hover:bg-red-500/20 rounded-full text-[11px] font-bold text-red-400 transition"
+                className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-slate-800 border border-slate-700 hover:bg-slate-700 rounded-full text-[11px] font-bold text-slate-300 transition cursor-pointer"
+                title="Sync database orders"
               >
-                <AlertCircle className="w-3 h-3" />
-                <span>Offline • Reconnect</span>
+                <RefreshCw className="w-3 h-3" />
+                <span>Sync Real-time</span>
               </button>
             )}
 

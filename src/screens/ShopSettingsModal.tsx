@@ -1,14 +1,21 @@
 import React from 'react';
 import { useOwnerApp } from '../context/OwnerAppContext';
 import { soundService } from '../services/soundService';
-import { X, Volume2, Flame, Sliders, CheckSquare, Square } from 'lucide-react';
+import { X, Volume2, Flame, Sliders } from 'lucide-react';
 
 interface ShopSettingsModalProps {
   onClose: () => void;
 }
 
 export const ShopSettingsModal: React.FC<ShopSettingsModalProps> = ({ onClose }) => {
-  const { shop, saveShop, toggleRushMode, toggleShopOpen, isSoundEnabled, toggleSound } = useOwnerApp();
+  const { 
+    shop, 
+    saveShop, 
+    toggleRushMode, 
+    toggleShopOpen, 
+    isSoundEnabled, 
+    toggleSound 
+  } = useOwnerApp();
 
   if (!shop) return null;
 

@@ -16,7 +16,8 @@ class OrderService {
         .order('created_at', ascending: false);
 
     if (status != null && status != 'all') {
-      query = query.eq('status', status);
+      final uppercaseStatus = status.toUpperCase();
+      query = query.or('order_status.eq.$uppercaseStatus,order_status.eq.$status');
     }
 
     final res = await query;
@@ -39,16 +40,22 @@ class OrderService {
     String? cancellationReason,
     int? estimatedPrepMinutes,
   }) async {
+    final String uppercaseStatus = newStatus.toUpperCase();
     final Map<String, dynamic> updateData = {
-      'status': newStatus,
+      'order_status': uppercaseStatus,
       'updated_at': DateTime.now().toIso8601String(),
     };
+
+    if (uppercaseStatus == 'COMPLETED') {
+      updateData['completed_at'] = DateTime.now().toIso8601String();
+      updateData['payment_status'] = 'PAID';
+    }
 
     if (cancellationReason != null) {
       updateData['cancellation_reason'] = cancellationReason;
     }
     if (estimatedPrepMinutes != null) {
-      updateData['estimated_prep_minutes'] = estimatedPrepMinutes;
+      updateData['estimated_preparation_minutes'] = '$estimatedPrepMinutes';
     }
 
     await _client.from('orders').update(updateData).eq('id', orderId);

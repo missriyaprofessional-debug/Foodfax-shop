@@ -21,6 +21,7 @@ export const ShopSetupScreen: React.FC = () => {
   const [longitude, setLongitude] = useState<number | undefined>();
   const [locating, setLocating] = useState(false);
   const [locationSuccess, setLocationSuccess] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   const shopTypes = [
     'Restaurant & Cafe',
@@ -32,8 +33,9 @@ export const ShopSetupScreen: React.FC = () => {
   ];
 
   const handleDetectLocation = () => {
+    setFormError(null);
     if (!navigator.geolocation) {
-      alert('Geolocation is not supported by your browser.');
+      setFormError('Geolocation is not supported by your browser.');
       return;
     }
 
@@ -48,7 +50,7 @@ export const ShopSetupScreen: React.FC = () => {
       (err) => {
         console.warn('Location detection failed:', err);
         setLocating(false);
-        alert('Could not retrieve current GPS coordinates. You can enter your street address and area manually.');
+        setFormError('Could not retrieve current GPS coordinates. Please enter your street address and area manually.');
       },
       { timeout: 8000, enableHighAccuracy: true }
     );
@@ -56,9 +58,10 @@ export const ShopSetupScreen: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setFormError(null);
 
     if (!shopName.trim()) {
-      alert('Please provide your restaurant name.');
+      setFormError('Please provide your restaurant name.');
       return;
     }
 
@@ -98,6 +101,12 @@ export const ShopSetupScreen: React.FC = () => {
           Welcome, {ownerProfile?.fullName || 'Partner'}! Let&apos;s configure your store details to begin receiving customer orders.
         </p>
       </div>
+
+      {formError && (
+        <div className="mb-4 p-3.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-xs font-semibold">
+          {formError}
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} className="bg-slate-900 border border-slate-800 rounded-2xl p-5 sm:p-6 space-y-4">
         {/* Basic Info */}
