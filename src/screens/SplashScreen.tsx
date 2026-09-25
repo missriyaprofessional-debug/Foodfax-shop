@@ -3,23 +3,35 @@ import { useOwnerApp } from '../context/OwnerAppContext';
 import { Store, Loader2 } from 'lucide-react';
 
 export const SplashScreen: React.FC = () => {
-  const { isAuthenticated, hasCompletedShopSetup, setActiveScreen } = useOwnerApp();
+  const { isAuthenticated, hasCompletedShopSetup, isLoading, setActiveScreen } = useOwnerApp();
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      if (isAuthenticated) {
-        if (hasCompletedShopSetup) {
-          setActiveScreen('dashboard');
-        } else {
-          setActiveScreen('shop_setup');
-        }
+    // Strictly wait until Supabase session check is complete (isLoading === false)
+    if (isLoading) {
+      console.log('[SplashScreen] ⏳ Waiting for Supabase auth session check to complete before routing...');
+      return;
+    }
+
+    console.log('[SplashScreen] 🚀 Session check completed. Deciding navigation target:', {
+      isAuthenticated,
+      hasCompletedShopSetup,
+    });
+
+    if (isAuthenticated) {
+      if (hasCompletedShopSetup) {
+        setActiveScreen('dashboard');
+      } else {
+        setActiveScreen('shop_setup');
+      }
+    } else {
+      const hasOnboarded = localStorage.getItem('foodfax_has_onboarded');
+      if (hasOnboarded === 'true') {
+        setActiveScreen('login');
       } else {
         setActiveScreen('onboarding');
       }
-    }, 1100);
-
-    return () => clearTimeout(timer);
-  }, [isAuthenticated, hasCompletedShopSetup, setActiveScreen]);
+    }
+  }, [isLoading, isAuthenticated, hasCompletedShopSetup, setActiveScreen]);
 
   return (
     <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 text-center">

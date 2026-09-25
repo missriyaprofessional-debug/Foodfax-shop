@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../core/constants.dart';
 import '../providers/auth_provider.dart';
 import '../providers/shop_provider.dart';
 import '../theme/app_colors.dart';
@@ -20,14 +22,25 @@ class _SplashScreenState extends State<SplashScreen> {
   }
 
   Future<void> _checkInitialState() async {
-    await Future.delayed(const Duration(milliseconds: 1200));
-    if (!mounted) return;
+    final prefs = await SharedPreferences.getInstance();
+    final hasOnboarded = prefs.getBool(AppConstants.prefHasOnboarded) ?? false;
 
     final auth = context.read<OwnerAuthProvider>();
     final shopProvider = context.read<ShopProvider>();
 
-    if (auth.isAuthenticated && auth.currentProfile != null) {
-      final hasShop = await shopProvider.checkShopSetup(auth.currentProfile!.id);
+    // Allow initial auth state check to complete gracefully
+    int elapsed = 0;
+    while (auth.status == AuthStatus.initial && elapsed < 1200) {
+      await Future.delayed(const Duration(milliseconds: 100));
+      elapsed += 100;
+      if (!mounted) return;
+    }
+
+    if (!mounted) return;
+
+    final userId = auth.currentProfile?.id ?? auth.currentUser?.id;
+    if (auth.isAuthenticated && userId != null && userId.isNotEmpty) {
+      final hasShop = await shopProvider.checkShopSetup(userId);
       if (!mounted) return;
       if (hasShop) {
         context.go('/dashboard');
@@ -35,7 +48,12 @@ class _SplashScreenState extends State<SplashScreen> {
         context.go('/shop-setup');
       }
     } else {
-      context.go('/onboarding');
+      // If user has already seen onboarding or has opened the app before, go straight to login
+      if (hasOnboarded) {
+        context.go('/login');
+      } else {
+        context.go('/onboarding');
+      }
     }
   }
 

@@ -76,15 +76,17 @@ class ShopService {
   Future<void> toggleRushMode(String shopId, bool isRushMode, {int extraMinutes = 15}) async {
     try {
       await _client.from('shops').update({
-        'is_rush_mode': isRushMode,
-        'rush_extra_minutes': extraMinutes,
+        'is_rush_hour': isRushMode,
+        'preparation_time_minutes': isRushMode ? '${extraMinutes + 10} min' : '10-15 min',
         'updated_at': DateTime.now().toIso8601String(),
       }).eq('id', shopId);
     } catch (_) {
-      await _client.from('restaurants').update({
-        'is_rush_mode': isRushMode,
-        'rush_extra_minutes': extraMinutes,
-      }).eq('id', shopId);
+      try {
+        await _client.from('shops').update({
+          'is_rush_mode': isRushMode,
+          'rush_extra_minutes': extraMinutes,
+        }).eq('id', shopId);
+      } catch (_) {}
     }
   }
 }

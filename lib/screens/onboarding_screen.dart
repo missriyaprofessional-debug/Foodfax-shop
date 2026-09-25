@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../core/constants.dart';
 import '../theme/app_colors.dart';
 import '../widgets/custom_button.dart';
 
@@ -13,6 +15,23 @@ class OwnerOnboardingScreen extends StatefulWidget {
 class _OwnerOnboardingScreenState extends State<OwnerOnboardingScreen> {
   final PageController _pageController = PageController();
   int _currentPage = 0;
+
+  void _markOnboardingComplete() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(AppConstants.prefHasOnboarded, true);
+    } catch (_) {}
+  }
+
+  void _goToLogin() {
+    _markOnboardingComplete();
+    context.go('/login');
+  }
+
+  void _goToRegister() {
+    _markOnboardingComplete();
+    context.go('/register');
+  }
 
   final List<Map<String, dynamic>> _slides = [
     {
@@ -62,7 +81,7 @@ class _OwnerOnboardingScreenState extends State<OwnerOnboardingScreen> {
                     ],
                   ),
                   TextButton(
-                    onPressed: () => context.go('/login'),
+                    onPressed: _goToLogin,
                     child: const Text('Login', style: TextStyle(color: AppColors.primary)),
                   ),
                 ],
@@ -131,13 +150,13 @@ class _OwnerOnboardingScreenState extends State<OwnerOnboardingScreen> {
               // Action Buttons
               CustomButton(
                 text: 'Register My Restaurant',
-                onPressed: () => context.go('/register'),
+                onPressed: _goToRegister,
               ),
               const SizedBox(height: 12),
               CustomButton(
                 text: 'Sign In to Existing Shop',
                 isOutlined: true,
-                onPressed: () => context.go('/login'),
+                onPressed: _goToLogin,
               ),
               const SizedBox(height: 12),
             ],

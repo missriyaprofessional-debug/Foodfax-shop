@@ -135,7 +135,7 @@ function saveLocalUser(phone: string, data: { password: string; fullName: string
 }
 
 export const OwnerAppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [activeScreen, setActiveScreen] = useState<ActiveScreen>('login');
+  const [activeScreen, setActiveScreen] = useState<ActiveScreen>('splash');
   const [ownerProfile, setOwnerProfile] = useState<OwnerProfile | null>(() => {
     const saved = localStorage.getItem('foodfax_owner_profile');
     if (saved) {
@@ -162,7 +162,8 @@ export const OwnerAppProvider: React.FC<{ children: ReactNode }> = ({ children }
   const [menuCategories, setMenuCategories] = useState<MenuCategory[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
 
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  // Initial state is strictly 'loading' until the Supabase session check completes
+  const [isLoading, setIsLoading] = useState<boolean>(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [isSoundEnabled, setIsSoundEnabled] = useState<boolean>(soundService.isEnabled());
@@ -391,36 +392,118 @@ export const OwnerAppProvider: React.FC<{ children: ReactNode }> = ({ children }
     }
   }, []);
 
-  // Supabase Auth listener & Session check
+  // Supabase Auth listener & Session check with detailed lifecycle logging
   useEffect(() => {
     const client = getSupabaseClient();
-    if (!client) return;
+    if (!client) {
+      console.warn('[OwnerAppProvider] ⚠️ Supabase client is not available yet');
+      setIsLoading(false);
+      return;
+    }
 
-    client.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
-        loadDatabaseData(session.user.id);
-      } else if (!ownerProfile) {
-        setActiveScreen('login');
-      }
-    });
+    console.log('[OwnerAppProvider] 🚀 Initializing Supabase auth session check at startup...');
 
-    const { data: authListener } = client.auth.onAuthStateChange(async (_event, session) => {
+    // 1. Initial Session Retrieval via getSession()
+    client.auth
+      .getSession()
+      .then(async ({ data: { session }, error }) => {
+        console.log('[OwnerAppProvider] 📦 supabase.auth.getSession() response:', {
+          hasSession: !!session,
+          error: error ? error.message : null,
+          user: session?.user
+            ? {
+                id: session.user.id,
+                email: session.user.email,
+                phone: session.user.phone,
+                role: session.user.role,
+                aud: session.user.aud,
+                appMetadata: session.user.app_metadata,
+                userMetadata: session.user.user_metadata,
+              }
+            : null,
+          expiresAt: session?.expires_at ? new Date(session.expires_at * 1000).toLocaleString() : null,
+        });
+
+        if (session?.user) {
+          console.log('[OwnerAppProvider] ✅ Active session detected! Restoring user data for:', session.user.id);
+          try {
+            await loadDatabaseData(session.user.id);
+          } finally {
+            setIsLoading(false);
+          }
+        } else {
+          console.log('[OwnerAppProvider] ℹ️ No active session returned by getSession(). Checking local fallback cache...');
+          const savedProfile = localStorage.getItem('foodfax_owner_profile');
+          let hasCachedUser = false;
+          if (savedProfile) {
+            try {
+              const parsed = JSON.parse(savedProfile);
+              if (parsed?.id) {
+                console.log('[OwnerAppProvider] 🔄 Found locally cached owner profile:', parsed.id, parsed.fullName);
+                setOwnerProfile(parsed);
+                await loadDatabaseData(parsed.id);
+                hasCachedUser = true;
+              }
+            } catch (e) {
+              console.warn('[OwnerAppProvider] Failed parsing cached profile:', e);
+            }
+          }
+
+          // Conclude session validation: mark isLoading to false before determining unauthenticated navigation
+          setIsLoading(false);
+
+          // Update routing logic: activeScreen is ONLY set to 'onboarding' or 'login' after isLoading becomes false post-session validation
+          if (!hasCachedUser) {
+            const hasOnboarded = localStorage.getItem('foodfax_has_onboarded');
+            console.log('[OwnerAppProvider] Post-session validation routing (foodfax_has_onboarded):', hasOnboarded);
+            const targetScreen: ActiveScreen = hasOnboarded === 'true' ? 'login' : 'onboarding';
+            setActiveScreen((prev) => (prev === 'splash' ? targetScreen : prev));
+          }
+        }
+      })
+      .catch((err) => {
+        console.error('[OwnerAppProvider] ❌ Error in supabase.auth.getSession():', err);
+        setIsLoading(false);
+        const hasOnboarded = localStorage.getItem('foodfax_has_onboarded');
+        setActiveScreen((prev) => (prev === 'splash' ? (hasOnboarded === 'true' ? 'login' : 'onboarding') : prev));
+      });
+
+    // 2. Auth State Change Listener
+    const { data: authListener } = client.auth.onAuthStateChange(async (event, session) => {
+      console.log('[OwnerAppProvider] 🔔 onAuthStateChange event triggered:', {
+        event,
+        hasSession: !!session,
+        user: session?.user
+          ? {
+              id: session.user.id,
+              email: session.user.email,
+              phone: session.user.phone,
+              role: session.user.role,
+              userMetadata: session.user.user_metadata,
+            }
+          : null,
+      });
+
       if (session?.user) {
+        console.log('[OwnerAppProvider] onAuthStateChange: User authenticated, loading owner data for:', session.user.id);
         await loadDatabaseData(session.user.id);
-      } else if (!ownerProfile) {
+        setIsLoading(false);
+      } else if (event === 'SIGNED_OUT') {
+        console.log('[OwnerAppProvider] onAuthStateChange: User signed out. Clearing application state.');
         setOwnerProfile(null);
         setShop(null);
         setOrders([]);
         setMenuCategories([]);
         setMenuItems([]);
         setActiveScreen('login');
+        setIsLoading(false);
       }
     });
 
     return () => {
       authListener.subscription.unsubscribe();
     };
-  }, [loadDatabaseData, ownerProfile]);
+  }, [loadDatabaseData]);
 
   // Global Realtime subscription for incoming orders
   useEffect(() => {

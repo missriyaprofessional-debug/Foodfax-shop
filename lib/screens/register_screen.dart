@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../core/constants.dart';
 import '../providers/auth_provider.dart';
 import '../providers/shop_provider.dart';
 import '../theme/app_colors.dart';
@@ -24,6 +26,19 @@ class _OwnerRegisterScreenState extends State<OwnerRegisterScreen> {
 
   String _countryCode = '+91';
   bool _obscurePassword = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _markOnboarded();
+  }
+
+  void _markOnboarded() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(AppConstants.prefHasOnboarded, true);
+    } catch (_) {}
+  }
 
   @override
   void dispose() {
@@ -50,11 +65,16 @@ class _OwnerRegisterScreenState extends State<OwnerRegisterScreen> {
 
     if (!mounted) return;
 
-    if (success && auth.currentUser != null) {
-      final hasShop = await shopProvider.checkShopSetup(auth.currentUser!.id);
-      if (!mounted) return;
-      if (hasShop) {
-        context.go('/dashboard');
+    if (success) {
+      final userId = auth.currentProfile?.id ?? auth.currentUser?.id;
+      if (userId != null && userId.isNotEmpty) {
+        final hasShop = await shopProvider.checkShopSetup(userId);
+        if (!mounted) return;
+        if (hasShop) {
+          context.go('/dashboard');
+        } else {
+          context.go('/shop-setup');
+        }
       } else {
         context.go('/shop-setup');
       }

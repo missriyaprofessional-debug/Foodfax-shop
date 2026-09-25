@@ -28,26 +28,34 @@ GoRouter createRouter(OwnerAuthProvider authProvider, ShopProvider shopProvider)
       final isCheckingAuth = authProvider.status == AuthStatus.initial;
       final location = state.uri.toString();
 
-      if (isCheckingAuth) return '/splash';
+      // Only force /splash on startup if we are currently at /splash and checking auth
+      if (isCheckingAuth && location == '/splash') {
+        return null;
+      }
 
       final isAuthRoute = location == '/login' ||
           location == '/register' ||
           location == '/onboarding' ||
           location == '/splash';
 
-      // 1. If not authenticated, ensure they can only visit login/register/onboarding
+      // 1. If not authenticated:
       if (!isAuth) {
+        // If on splash and done checking, go to login unless already navigating to an auth route
+        if (location == '/splash') {
+          return null; // Handled by SplashScreen after checking hasOnboarded
+        }
         return isAuthRoute ? null : '/login';
       }
 
-      // 2. If authenticated, check shop setup
+      // 2. If authenticated:
       final hasShop = shopProvider.hasCompletedShopSetup;
       if (!hasShop) {
-        // Must complete shop setup first
+        // If they have not completed shop setup, only let them visit /shop-setup
         return location == '/shop-setup' ? null : '/shop-setup';
       }
 
-      // 3. Authenticated and has shop: prevent visiting login/register/onboarding/shop-setup
+      // 3. Authenticated and has shop:
+      // Prevent visiting splash, onboarding, login, register, or shop-setup once shop is ready
       if (isAuthRoute || location == '/shop-setup') {
         return '/dashboard';
       }

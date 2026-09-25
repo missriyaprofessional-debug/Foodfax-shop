@@ -1,10 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useOwnerApp } from '../context/OwnerAppContext';
 import { Store, User, Phone, Lock, Eye, EyeOff, Loader2, AlertCircle, ArrowLeft, CheckCircle2 } from 'lucide-react';
 import { registerSchema } from '../utils/validationSchemas';
 
 export const RegisterScreen: React.FC = () => {
   const { registerWithPhone, isLoading, errorMessage, setActiveScreen } = useOwnerApp();
+
+  useEffect(() => {
+    localStorage.setItem('foodfax_has_onboarded', 'true');
+  }, []);
 
   const [fullName, setFullName] = useState('');
   const [countryCode, setCountryCode] = useState('+91');

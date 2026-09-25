@@ -35,7 +35,10 @@ export const OnboardingScreen: React.FC = () => {
           <span className="font-extrabold text-base tracking-tight text-white">FoodFax Partner</span>
         </div>
         <button
-          onClick={() => setActiveScreen('login')}
+          onClick={() => {
+            localStorage.setItem('foodfax_has_onboarded', 'true');
+            setActiveScreen('login');
+          }}
           className="text-xs font-bold text-orange-400 hover:text-orange-300"
         >
           Sign In
@@ -71,14 +74,20 @@ export const OnboardingScreen: React.FC = () => {
       {/* Actions */}
       <div className="flex flex-col gap-3 pb-4">
         <button
-          onClick={() => setActiveScreen('register')}
+          onClick={() => {
+            localStorage.setItem('foodfax_has_onboarded', 'true');
+            setActiveScreen('register');
+          }}
           className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-orange-600/30 transition"
         >
           <span>Register My Restaurant</span>
           <ArrowRight className="w-4 h-4" />
         </button>
         <button
-          onClick={() => setActiveScreen('login')}
+          onClick={() => {
+            localStorage.setItem('foodfax_has_onboarded', 'true');
+            setActiveScreen('login');
+          }}
           className="w-full py-3.5 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 font-semibold text-sm transition"
         >
           Sign In to Existing Shop

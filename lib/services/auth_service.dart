@@ -12,31 +12,26 @@ class AuthService {
 
   String _phoneToInternalEmail(String phone) {
     final digits = phone.replaceAll(RegExp(r'\D'), '');
+    return 'ff.owner.$digits@foodfax.local';
+  }
+
+  String _phoneToFallbackEmail(String phone) {
+    final digits = phone.replaceAll(RegExp(r'\D'), '');
     return 'ff.owner.$digits@gmail.com';
   }
 
-  /// Register new owner with phone number
+  /// Register new owner with phone number in Supabase Auth & public.users table
   Future<AuthResponse> registerOwnerWithPhone({
     required String phone,
     required String password,
     required String fullName,
   }) async {
     final cleanPhone = phone.trim().replaceAll(' ', '');
+    final digits = cleanPhone.replaceAll(RegExp(r'\D'), '');
+    final internalEmail = _phoneToInternalEmail(cleanPhone);
     AuthResponse response;
 
     try {
-      response = await _client.auth.signUp(
-        phone: cleanPhone,
-        password: password,
-        data: {
-          'full_name': fullName.trim(),
-          'phone': cleanPhone,
-          'role': 'owner',
-        },
-      );
-    } catch (_) {
-      // Fallback if Phone provider is not enabled in Supabase Dashboard
-      final internalEmail = _phoneToInternalEmail(cleanPhone);
       response = await _client.auth.signUp(
         email: internalEmail,
         password: password,
@@ -46,27 +41,49 @@ class AuthService {
           'role': 'owner',
         },
       );
-    }
-
-    if (response.user != null) {
+    } catch (_) {
       try {
-        await _client.from('profiles').upsert({
-          'id': response.user!.id,
-          'full_name': fullName.trim(),
-          'phone': cleanPhone,
-          'role': 'owner',
-          'updated_at': DateTime.now().toIso8601String(),
-        });
-      } catch (_) {
-        try {
-          await _client.from('owner_profiles').upsert({
-            'id': response.user!.id,
-            'name': fullName.trim(),
+        response = await _client.auth.signUp(
+          phone: cleanPhone,
+          password: password,
+          data: {
+            'full_name': fullName.trim(),
             'phone': cleanPhone,
             'role': 'owner',
-          });
-        } catch (_) {}
+          },
+        );
+      } catch (_) {
+        final fallbackEmail = _phoneToFallbackEmail(cleanPhone);
+        response = await _client.auth.signUp(
+          email: fallbackEmail,
+          password: password,
+          data: {
+            'full_name': fullName.trim(),
+            'phone': cleanPhone,
+            'role': 'owner',
+          },
+        );
       }
+    }
+
+    final userId = response.user?.id ?? 'owner_$digits';
+
+    // Store in public.users table matching database schema
+    try {
+      await _client.from('users').upsert({
+        'id': userId,
+        'phone': cleanPhone,
+        'email': internalEmail,
+        'full_name': fullName.trim(),
+        'role': 'owner',
+        'profile_completed': true,
+        'is_active': true,
+        'is_demo': false,
+        'created_at': DateTime.now().toIso8601String(),
+        'updated_at': DateTime.now().toIso8601String(),
+      }, onConflict: 'id');
+    } catch (e) {
+      // ignore table upsert warnings
     }
 
     return response;
@@ -78,32 +95,121 @@ class AuthService {
     required String password,
   }) async {
     final cleanPhone = phone.trim().replaceAll(' ', '');
+    final digits = cleanPhone.replaceAll(RegExp(r'\D'), '');
+    final last10 = digits.length >= 10 ? digits.substring(digits.length - 10) : digits;
+
+    // 1. Try signInWithPassword using canonical internal email (@foodfax.local)
+    final internalEmail = _phoneToInternalEmail(cleanPhone);
+    try {
+      final response = await _client.auth.signInWithPassword(
+        email: internalEmail,
+        password: password,
+      );
+      if (response.user != null) {
+        _syncUserRecord(response.user!.id, cleanPhone, response.user!.userMetadata?['full_name']);
+        return response;
+      }
+    } catch (_) {}
+
+    // 2. Try signInWithPassword using fallback email (@gmail.com)
+    final fallbackEmail = _phoneToFallbackEmail(cleanPhone);
+    try {
+      final response = await _client.auth.signInWithPassword(
+        email: fallbackEmail,
+        password: password,
+      );
+      if (response.user != null) {
+        _syncUserRecord(response.user!.id, cleanPhone, response.user!.userMetadata?['full_name']);
+        return response;
+      }
+    } catch (_) {}
+
+    // 3. Try signInWithPassword with phone directly
     try {
       final response = await _client.auth.signInWithPassword(
         phone: cleanPhone,
         password: password,
       );
-      return response;
-    } catch (_) {
-      // Fallback if Phone provider is disabled
-      final internalEmail = _phoneToInternalEmail(cleanPhone);
-      try {
-        return await _client.auth.signInWithPassword(
-          email: internalEmail,
-          password: password,
-        );
-      } catch (_) {
-        // Auto-register if first time
-        return await _client.auth.signUp(
-          email: internalEmail,
-          password: password,
-          data: {
-            'phone': cleanPhone,
-            'role': 'owner',
-          },
-        );
+      if (response.user != null) {
+        _syncUserRecord(response.user!.id, cleanPhone, response.user!.userMetadata?['full_name']);
+        return response;
       }
+    } catch (_) {}
+
+    // 4. Check if user already exists in public.users table
+    try {
+      final userRecord = await _client
+          .from('users')
+          .select()
+          .or('phone.eq.$cleanPhone,phone.eq.$digits,phone.ilike.%$last10%')
+          .limit(1)
+          .maybeSingle();
+
+      if (userRecord != null) {
+        // Check if user has a stored email in their users record and try that
+        final recordEmail = userRecord['email'] as String?;
+        if (recordEmail != null && recordEmail.isNotEmpty && recordEmail != internalEmail && recordEmail != fallbackEmail) {
+          try {
+            final res = await _client.auth.signInWithPassword(
+              email: recordEmail,
+              password: password,
+            );
+            if (res.user != null) {
+              _syncUserRecord(res.user!.id, cleanPhone, userRecord['full_name']);
+              return res;
+            }
+          } catch (_) {}
+        }
+
+        // User is registered in database; ensure auth account exists
+        try {
+          final signUpRes = await _client.auth.signUp(
+            email: internalEmail,
+            password: password,
+            data: {
+              'full_name': userRecord['full_name'] ?? 'Restaurant Owner',
+              'phone': cleanPhone,
+              'role': 'owner',
+            },
+          );
+          if (signUpRes.user != null) {
+            return signUpRes;
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+
+    // 5. Final fallback: auto-register with provided credentials
+    try {
+      return await _client.auth.signUp(
+        email: internalEmail,
+        password: password,
+        data: {
+          'phone': cleanPhone,
+          'role': 'owner',
+        },
+      );
+    } catch (e) {
+      final msg = e.toString().toLowerCase();
+      if (msg.contains('already registered') || msg.contains('already exists') || msg.contains('user_already_exists')) {
+        throw Exception('Incorrect password for registered owner $cleanPhone. Please check your password or use SMS OTP to log in.');
+      }
+      rethrow;
     }
+  }
+
+  void _syncUserRecord(String userId, String phone, dynamic name) async {
+    try {
+      await _client.from('users').upsert({
+        'id': userId,
+        'phone': phone,
+        'role': 'owner',
+        'profile_completed': true,
+        'is_active': true,
+        'updated_at': DateTime.now().toIso8601String(),
+        if (name != null) 'full_name': name.toString(),
+      }, onConflict: 'id');
+    } catch (_) {}
   }
 
   /// Send Phone OTP (SMS)
@@ -124,17 +230,21 @@ class AuthService {
     required String token,
   }) async {
     final cleanPhone = phone.trim().replaceAll(' ', '');
+    final digits = cleanPhone.replaceAll(RegExp(r'\D'), '');
     try {
       final response = await _client.auth.verifyOtp(
         phone: cleanPhone,
         token: token.trim(),
         type: OtpType.sms,
       );
+      if (response.user != null) {
+        _syncUserRecord(response.user!.id, cleanPhone, 'Restaurant Owner');
+      }
       return response;
     } catch (_) {
-      // Fallback signup session
+      // Fallback signup session with OTP password
       final internalEmail = _phoneToInternalEmail(cleanPhone);
-      return await _client.auth.signUp(
+      final res = await _client.auth.signUp(
         email: internalEmail,
         password: 'FoodFaxOwner@${token.trim()}',
         data: {
@@ -142,6 +252,9 @@ class AuthService {
           'role': 'owner',
         },
       );
+      final userId = res.user?.id ?? 'owner_$digits';
+      _syncUserRecord(userId, cleanPhone, 'Restaurant Owner');
+      return res;
     }
   }
 
@@ -150,11 +263,12 @@ class AuthService {
     await _client.auth.signOut();
   }
 
-  /// Fetch owner profile
+  /// Fetch owner profile from public.users table
   Future<OwnerProfile?> fetchOwnerProfile(String userId) async {
     try {
+      // 1. Query public.users table by id
       final res = await _client
-          .from('profiles')
+          .from('users')
           .select()
           .eq('id', userId)
           .maybeSingle();
@@ -162,30 +276,40 @@ class AuthService {
       if (res != null) {
         return OwnerProfile.fromJson(res);
       }
-    } catch (_) {
-      try {
-        final res = await _client
-          .from('owner_profiles')
-          .select()
-          .eq('id', userId)
-          .maybeSingle();
+    } catch (_) {}
 
-        if (res != null) {
-          return OwnerProfile.fromJson(res);
-        }
-      } catch (_) {}
-    }
-
+    // 2. Query public.users by current user phone
     final user = currentUser;
-    if (user != null && user.id == userId) {
+    if (user != null) {
+      final phone = user.userMetadata?['phone'] as String?;
+      if (phone != null && phone.isNotEmpty) {
+        final digits = phone.replaceAll(RegExp(r'\D'), '');
+        final last10 = digits.length >= 10 ? digits.substring(digits.length - 10) : digits;
+        try {
+          final res = await _client
+              .from('users')
+              .select()
+              .or('phone.eq.$phone,phone.ilike.%$last10%')
+              .limit(1)
+              .maybeSingle();
+
+          if (res != null) {
+            return OwnerProfile.fromJson(res);
+          }
+        } catch (_) {}
+      }
+
+      // 3. Fallback to Supabase Auth User object
       return OwnerProfile(
         id: user.id,
         email: user.email ?? '',
-        fullName: user.userMetadata?['full_name'] as String? ?? 'Shop Owner',
-        phone: user.userMetadata?['phone'] as String?,
+        fullName: user.userMetadata?['full_name'] as String? ?? 'Restaurant Owner',
+        phone: user.userMetadata?['phone'] as String? ?? phone,
         role: 'owner',
+        createdAt: DateTime.tryParse(user.createdAt),
       );
     }
+
     return null;
   }
 

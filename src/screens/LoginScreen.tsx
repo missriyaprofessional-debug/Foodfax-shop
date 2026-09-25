@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useOwnerApp } from '../context/OwnerAppContext';
 import { 
   Store, 
@@ -34,6 +34,10 @@ export const LoginScreen: React.FC = () => {
     resetPasswordWithOtp,
     resetOtpCode
   } = useOwnerApp();
+
+  useEffect(() => {
+    localStorage.setItem('foodfax_has_onboarded', 'true');
+  }, []);
 
   const [countryCode, setCountryCode] = useState('+91');
   const [phoneNumber, setPhoneNumber] = useState('');

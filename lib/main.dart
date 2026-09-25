@@ -29,31 +29,55 @@ void main() async {
   runApp(const FoodFaxOwnerApp());
 }
 
-class FoodFaxOwnerApp extends StatelessWidget {
+class FoodFaxOwnerApp extends StatefulWidget {
   const FoodFaxOwnerApp({super.key});
+
+  @override
+  State<FoodFaxOwnerApp> createState() => _FoodFaxOwnerAppState();
+}
+
+class _FoodFaxOwnerAppState extends State<FoodFaxOwnerApp> {
+  late final OwnerAuthProvider _authProvider;
+  late final ShopProvider _shopProvider;
+  late final OrderProvider _orderProvider;
+  late final MenuProvider _menuProvider;
+  late final GoRouter _router;
+
+  @override
+  void initState() {
+    super.initState();
+    _authProvider = OwnerAuthProvider();
+    _shopProvider = ShopProvider();
+    _orderProvider = OrderProvider();
+    _menuProvider = MenuProvider();
+    // Router is initialized once and relies on GoRouter's refreshListenable
+    _router = createRouter(_authProvider, _shopProvider);
+  }
+
+  @override
+  void dispose() {
+    _router.dispose();
+    _authProvider.dispose();
+    _shopProvider.dispose();
+    _orderProvider.dispose();
+    _menuProvider.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (_) => OwnerAuthProvider()),
-        ChangeNotifierProvider(create: (_) => ShopProvider()),
-        ChangeNotifierProvider(create: (_) => OrderProvider()),
-        ChangeNotifierProvider(create: (_) => MenuProvider()),
+        ChangeNotifierProvider.value(value: _authProvider),
+        ChangeNotifierProvider.value(value: _shopProvider),
+        ChangeNotifierProvider.value(value: _orderProvider),
+        ChangeNotifierProvider.value(value: _menuProvider),
       ],
-      child: Builder(
-        builder: (context) {
-          final authProvider = context.watch<OwnerAuthProvider>();
-          final shopProvider = context.watch<ShopProvider>();
-          final router = createRouter(authProvider, shopProvider);
-
-          return MaterialApp.router(
-            title: AppConstants.appName,
-            debugShowCheckedModeBanner: false,
-            theme: AppTheme.darkTheme,
-            routerConfig: router,
-          );
-        },
+      child: MaterialApp.router(
+        title: AppConstants.appName,
+        debugShowCheckedModeBanner: false,
+        theme: AppTheme.darkTheme,
+        routerConfig: _router,
       ),
     );
   }
